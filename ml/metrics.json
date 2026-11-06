@@ -1,0 +1,268 @@
+{
+  "model": "RandomForestClassifier",
+  "features": [
+    "event_count",
+    "tcp_connection_count",
+    "http_request_count",
+    "login_attempt_count",
+    "unique_usernames",
+    "unique_paths",
+    "session_duration_seconds",
+    "attempts_per_minute",
+    "payload_length_chars",
+    "error_count",
+    "error_ratio",
+    "unique_event_types"
+  ],
+  "label_counts": {
+    "brute_force": 10,
+    "port_scan": 10,
+    "sql_injection": 10,
+    "directory_probe": 10,
+    "benign": 10
+  },
+  "split": {
+    "strategy": "stratified train_test_split",
+    "test_size": 0.25,
+    "random_state": 42,
+    "training_samples": 37,
+    "test_samples": 13
+  },
+  "cross_validation": {
+    "strategy": "StratifiedKFold",
+    "folds": 5,
+    "scoring": "macro average",
+    "mean_precision": 0.9466666666666667,
+    "std_precision": 0.10666666666666669,
+    "mean_recall": 0.96,
+    "std_recall": 0.07999999999999999,
+    "mean_f1": 0.952,
+    "std_f1": 0.09599999999999999
+  },
+  "stratified_test": {
+    "sample_count": 13,
+    "accuracy": 0.9230769230769231,
+    "macro_precision": 0.9333333333333332,
+    "macro_recall": 0.9333333333333332,
+    "macro_f1": 0.9199999999999999,
+    "macro_false_positive_rate": 0.01818181818181818,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 3,
+        "false_positive_rate": 0.0
+      },
+      "brute_force": {
+        "precision": 0.6666666666666666,
+        "recall": 1.0,
+        "f1": 0.8,
+        "support": 2,
+        "false_positive_rate": 0.09090909090909091
+      },
+      "directory_probe": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 3,
+        "false_positive_rate": 0.0
+      },
+      "port_scan": {
+        "precision": 1.0,
+        "recall": 0.6666666666666666,
+        "f1": 0.8,
+        "support": 3,
+        "false_positive_rate": 0.0
+      },
+      "sql_injection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 2,
+        "false_positive_rate": 0.0
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "brute_force",
+        "directory_probe",
+        "port_scan",
+        "sql_injection"
+      ],
+      "values": [
+        [
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          2,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          3,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          2,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          2
+        ]
+      ]
+    }
+  },
+  "different_seed_evaluation": {
+    "sample_count": 50,
+    "accuracy": 0.94,
+    "macro_precision": 0.9538461538461538,
+    "macro_recall": 0.9400000000000001,
+    "macro_f1": 0.9386189258312021,
+    "macro_false_positive_rate": 0.015,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.7692307692307693,
+        "recall": 1.0,
+        "f1": 0.8695652173913043,
+        "support": 10,
+        "false_positive_rate": 0.075
+      },
+      "brute_force": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 10,
+        "false_positive_rate": 0.0
+      },
+      "directory_probe": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 10,
+        "false_positive_rate": 0.0
+      },
+      "port_scan": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 10,
+        "false_positive_rate": 0.0
+      },
+      "sql_injection": {
+        "precision": 1.0,
+        "recall": 0.7,
+        "f1": 0.8235294117647058,
+        "support": 10,
+        "false_positive_rate": 0.0
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "brute_force",
+        "directory_probe",
+        "port_scan",
+        "sql_injection"
+      ],
+      "values": [
+        [
+          10,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          10,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          10,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          10,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          7
+        ]
+      ]
+    },
+    "labels_file": "data/different_seed_labels.csv"
+  },
+  "isolation_forest_baseline": {
+    "sample_count": 13,
+    "accuracy": 0.15384615384615385,
+    "macro_precision": 0.08333333333333333,
+    "macro_recall": 0.3333333333333333,
+    "macro_f1": 0.13333333333333333,
+    "macro_false_positive_rate": 0.6666666666666666,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.16666666666666666,
+        "recall": 0.6666666666666666,
+        "f1": 0.26666666666666666,
+        "support": 3,
+        "false_positive_rate": 1.0
+      },
+      "anomaly": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 10,
+        "false_positive_rate": 0.3333333333333333
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "anomaly"
+      ],
+      "values": [
+        [
+          2,
+          1
+        ],
+        [
+          10,
+          0
+        ]
+      ]
+    }
+  }
+}

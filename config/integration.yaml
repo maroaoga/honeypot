@@ -1,0 +1,12 @@
+seed: 20261108
+
+timing:
+  min_delay_seconds: 0.02
+  max_delay_seconds: 0.05
+
+volumes:
+  brute_force_attempts: 3
+  port_scan_probes: 2
+  sql_injection_probes: 2
+  directory_probes: 2
+  benign_sessions: 3
