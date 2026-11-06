@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import joblib
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -20,11 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from werkzeug.serving import make_server
+from sklearn.ensemble import RandomForestClassifier
 
 from adaptive.rules import MALICIOUS_LABELS, observe_classification
 from dashboard.data import load_dashboard_data
 from database.db import (
     DEFAULT_DB_PATH,
+    MAX_QUERY_LIMIT,
     initialize_database,
     list_adaptive_actions,
     list_events,
@@ -32,6 +35,8 @@ from database.db import (
 )
 from honeypot.tcp_service import LOCALHOST, start_tcp_service
 from honeypot.web_service import create_app
+from features.extractor import FEATURE_COLUMNS, extract_features
+from ml.train import DEFAULT_MODEL_PATH
 from simulator.runner import (
     SimulationConfig,
     load_simulation_config,
@@ -45,9 +50,7 @@ DEFAULT_INTEGRATION_LABELS = ROOT / "data" / "integration_labels.csv"
 DEFAULT_DASHBOARD_PORT = 8501
 SERVICE_START_TIMEOUT_SECONDS = 10
 DASHBOARD_START_TIMEOUT_SECONDS = 20
-MAX_PIPELINE_SESSIONS = 1000
-SQL_MARKERS = ("'", '"', "--", " OR ", " or ")
-KNOWN_LOGIN_PATHS = {"/", "/login"}
+MAX_PIPELINE_SESSIONS = 5000
 
 logger = logging.getLogger(__name__)
 
@@ -168,37 +171,58 @@ def _service_ports(db_path: str | Path):
         tcp.stop()
 
 
-def classify_session_events(events: list[dict[str, Any]]) -> tuple[str, float]:
-    """Apply a transparent event-only classifier; never reads simulator labels."""
-    event_types = {str(event["event_type"]) for event in events}
-    details = [
-        event["details"] if isinstance(event["details"], dict) else {}
-        for event in events
-    ]
+def load_model_artifact(model_path: str | Path = DEFAULT_MODEL_PATH) -> dict[str, Any]:
+    """Load and validate the saved Random Forest inference artifact."""
+    path = Path(model_path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Trained Random Forest artifact was not found at '{path}'. "
+            "Run the experiment training step first."
+        )
+    artifact = joblib.load(path)
+    if not isinstance(artifact, dict) or set(artifact) != {
+        "model",
+        "feature_columns",
+        "classes",
+    }:
+        raise ValueError("Model artifact must contain model, feature_columns, and classes.")
+    model = artifact["model"]
+    feature_columns = artifact["feature_columns"]
+    classes = artifact["classes"]
+    if not isinstance(model, RandomForestClassifier):
+        raise ValueError("Saved model must be a scikit-learn RandomForestClassifier.")
+    if not callable(getattr(model, "predict_proba", None)):
+        raise ValueError("Saved model must support predict and predict_proba.")
+    if feature_columns != list(FEATURE_COLUMNS):
+        raise ValueError("Saved model feature columns do not match the current extractor.")
+    if not isinstance(classes, list) or not classes:
+        raise ValueError("Model artifact classes must be a non-empty list.")
+    if classes != [str(label) for label in model.classes_]:
+        raise ValueError("Model artifact classes do not match the saved classifier.")
+    return artifact
 
-    if "tcp_login_attempt" in event_types:
-        return "brute_force", 0.95
 
-    usernames = [
-        str(item.get("username", ""))
-        for item, event in zip(details, events)
-        if event["event_type"] == "http_login_attempt"
-    ]
-    if any(any(marker in f" {username} " for marker in SQL_MARKERS) for username in usernames):
-        return "sql_injection", 0.95
-
-    paths = [
-        str(item.get("path", ""))
-        for item, event in zip(details, events)
-        if event["event_type"] == "http_request"
-    ]
-    if any(path not in KNOWN_LOGIN_PATHS for path in paths):
-        return "directory_probe", 0.9
-
-    if "tcp_connection" in event_types or "/" in paths:
-        return "port_scan", 0.9
-
-    return "benign", 0.9
+def classify_features(
+    artifact: dict[str, Any],
+    feature_row: Any,
+) -> tuple[str, float]:
+    """Classify a single numeric session row using the saved Random Forest."""
+    columns = artifact["feature_columns"]
+    sample = feature_row.reindex(columns=columns)
+    if sample.shape != (1, len(columns)) or sample.isna().any().any():
+        raise ValueError("Session features must contain one complete model input row.")
+    model = artifact["model"]
+    prediction = str(model.predict(sample)[0])
+    probabilities = model.predict_proba(sample)[0]
+    classes = [str(label) for label in model.classes_]
+    if prediction not in classes:
+        raise ValueError("Model prediction is missing from the model's class list.")
+    if prediction not in {"benign", *MALICIOUS_LABELS}:
+        raise ValueError(f"Model predicted unsupported class '{prediction}'.")
+    confidence = float(probabilities[classes.index(prediction)])
+    if not 0 <= confidence <= 1:
+        raise ValueError("Model confidence must be from 0 through 1.")
+    return prediction, confidence
 
 
 def _start_dashboard(db_path: str | Path, port: int) -> str:
@@ -261,15 +285,43 @@ def _start_dashboard(db_path: str | Path, port: int) -> str:
     raise TimeoutError(f"Streamlit did not become healthy on port {port}.")
 
 
+def _list_sessions_paged(db_path: str | Path, limit: int) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    while len(records) < limit:
+        page_size = min(MAX_QUERY_LIMIT, limit - len(records))
+        page = list_sessions(limit=page_size, offset=len(records), db_path=db_path)
+        records.extend(page)
+        if len(page) < page_size:
+            break
+    return records
+
+
+def _list_actions_paged(db_path: str | Path, limit: int) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    while len(records) < limit:
+        page_size = min(MAX_QUERY_LIMIT, limit - len(records))
+        page = list_adaptive_actions(
+            limit=page_size,
+            offset=len(records),
+            db_path=db_path,
+        )
+        records.extend(page)
+        if len(page) < page_size:
+            break
+    return records
+
+
 def run_pipeline(
     *,
     config: SimulationConfig,
     db_path: str | Path = DEFAULT_DB_PATH,
     labels_path: str | Path = DEFAULT_INTEGRATION_LABELS,
+    model_path: str | Path = DEFAULT_MODEL_PATH,
     launch_dashboard: bool = False,
     dashboard_port: int = DEFAULT_DASHBOARD_PORT,
 ) -> PipelineResult:
     """Run a complete real localhost service → simulation → adaptation pipeline."""
+    model_artifact = load_model_artifact(model_path)
     initialize_database(db_path)
     existing_sessions = list_sessions(limit=1, db_path=db_path)
     last_existing_id = int(existing_sessions[0]["id"]) if existing_sessions else 0
@@ -287,7 +339,7 @@ def run_pipeline(
     generated_sessions = [
         session
         for session in reversed(
-            list_sessions(limit=MAX_PIPELINE_SESSIONS, db_path=db_path)
+            _list_sessions_paged(db_path, MAX_PIPELINE_SESSIONS)
         )
         if int(session["id"]) > last_existing_id
     ]
@@ -297,15 +349,16 @@ def run_pipeline(
             f"expected {simulated_count}, found {len(generated_sessions)}."
         )
 
+    features = extract_features(db_path)
     classification_counts: Counter[str] = Counter()
     for session in generated_sessions:
         session_id = int(session["id"])
-        events = list_events(
-            session_id=session_id,
-            limit=100,
-            db_path=db_path,
+        if session_id not in features.index:
+            raise RuntimeError(f"No extracted features for session {session_id}.")
+        classification, confidence = classify_features(
+            model_artifact,
+            features.loc[[session_id]],
         )
-        classification, confidence = classify_session_events(events)
         observe_classification(
             session_id,
             classification,
@@ -314,7 +367,7 @@ def run_pipeline(
         )
         classification_counts[classification] += 1
 
-    actions = list_adaptive_actions(limit=MAX_PIPELINE_SESSIONS, db_path=db_path)
+    actions = _list_actions_paged(db_path, MAX_PIPELINE_SESSIONS)
     generated_ids = {int(session["id"]) for session in generated_sessions}
     run_actions = [
         action for action in actions if int(action["session_id"]) in generated_ids
@@ -326,9 +379,25 @@ def run_pipeline(
     )
     if dashboard_data["summary"]["sessions"] < simulated_count:
         raise RuntimeError("Dashboard query did not include the generated sessions.")
-    if dashboard_data["summary"]["malicious_classifications"] < sum(
-        count for label, count in classification_counts.items()
-        if label in MALICIOUS_LABELS
+    dashboard_classification_counts = {
+        str(row["classification"]): int(row["count"])
+        for _, row in dashboard_data["classifications"].iterrows()
+    }
+    if any(
+        dashboard_classification_counts.get(label, 0) < count
+        for label, count in classification_counts.items()
+    ):
+        raise RuntimeError("Dashboard query did not include the new classifications.")
+    run_malicious_classifications = sum(
+        1
+        for action in run_actions
+        if action["action_type"] == "classification_observed"
+        and isinstance(action["details"], dict)
+        and action["details"].get("malicious") is True
+    )
+    if (
+        dashboard_data["summary"]["malicious_classifications"]
+        < run_malicious_classifications
     ):
         raise RuntimeError("Dashboard query did not include the new classifications.")
 
@@ -354,12 +423,19 @@ def run_pipeline(
 
 
 def main() -> None:
+    from config.environment import database_path
+
     parser = argparse.ArgumentParser(
         description="Run the complete local honeypot demonstration pipeline."
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_INTEGRATION_CONFIG)
-    parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=database_path() or DEFAULT_DB_PATH,
+    )
     parser.add_argument("--labels", type=Path, default=DEFAULT_INTEGRATION_LABELS)
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument(
         "--no-dashboard",
         action="store_true",
@@ -372,6 +448,7 @@ def main() -> None:
         config=config,
         db_path=args.database,
         labels_path=args.labels,
+        model_path=args.model,
         launch_dashboard=not args.no_dashboard,
         dashboard_port=args.dashboard_port,
     )

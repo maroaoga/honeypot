@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import joblib
@@ -21,6 +22,9 @@ from sklearn.metrics import (
 )
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from database.db import DEFAULT_DB_PATH
 from features.extractor import extract_features
@@ -28,8 +32,9 @@ from simulator.runner import DEFAULT_LABELS_PATH
 
 
 logger = logging.getLogger(__name__)
-DEFAULT_MODEL_PATH = Path(__file__).with_name("random_forest.joblib")
-DEFAULT_METRICS_PATH = Path(__file__).with_name("metrics.json")
+DEFAULT_RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
+DEFAULT_MODEL_PATH = DEFAULT_RESULTS_DIR / "random_forest.joblib"
+DEFAULT_METRICS_PATH = DEFAULT_RESULTS_DIR / "metrics.json"
 DEFAULT_RANDOM_STATE = 42
 DEFAULT_CV_FOLDS = 5
 DEFAULT_TEST_SIZE = 0.25
@@ -163,8 +168,68 @@ def _evaluate(
     labels: pd.Series,
     classes: list[str],
 ) -> dict[str, Any]:
+    started = perf_counter()
     predictions = model.predict(features)
-    return _classification_metrics(labels, predictions, classes)
+    elapsed = perf_counter() - started
+    metrics = _classification_metrics(labels, predictions, classes)
+    metrics["prediction_time_seconds"] = elapsed
+    metrics["prediction_time_per_session_ms"] = (
+        elapsed * 1000 / len(features) if len(features) else 0.0
+    )
+    return metrics
+
+
+def _write_result_tables(
+    results_dir: Path,
+    features: pd.DataFrame,
+    labels: pd.Series,
+    model: RandomForestClassifier,
+    metrics: dict[str, Any],
+) -> None:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    labeled_features = features.copy()
+    labeled_features.insert(0, "session_id", labeled_features.index)
+    labeled_features.to_csv(results_dir / "session_features.csv", index=False)
+    labeled_features.head(10).to_csv(results_dir / "feature_head.csv", index=False)
+
+    summary = features.assign(label=labels).groupby("label")[list(features.columns)].mean()
+    summary.to_csv(results_dir / "feature_means_by_class.csv")
+    zero_summary = pd.DataFrame(
+        {
+            "feature": list(features.columns),
+            "missing_values": features.isna().sum().to_numpy(),
+            "zero_values": features.eq(0).sum().to_numpy(),
+        }
+    )
+    zero_summary["zero_percent"] = (
+        zero_summary["zero_values"] * 100 / len(features)
+    )
+    zero_summary.to_csv(
+        results_dir / "feature_missing_zero_summary.csv",
+        index=False,
+    )
+
+    importance = pd.DataFrame(
+        {
+            "feature": list(features.columns),
+            "importance": model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+    importance.to_csv(results_dir / "feature_importances.csv", index=False)
+
+    matrix = metrics["stratified_test"]["confusion_matrix"]
+    pd.DataFrame(
+        matrix["values"],
+        index=matrix["labels_in_order"],
+        columns=matrix["labels_in_order"],
+    ).to_csv(results_dir / "confusion_matrix.csv", index_label="actual")
+    cv_scores = metrics["cross_validation"]["fold_f1_scores"]
+    pd.DataFrame(
+        {
+            "fold": range(1, len(cv_scores) + 1),
+            "macro_f1": cv_scores,
+        }
+    ).to_csv(results_dir / "cross_validation_scores.csv", index=False)
 
 
 def train_and_evaluate(
@@ -174,6 +239,7 @@ def train_and_evaluate(
     model_path: str | Path = DEFAULT_MODEL_PATH,
     metrics_path: str | Path = DEFAULT_METRICS_PATH,
     different_seed_labels_path: str | Path | None = None,
+    different_seed_db_path: str | Path | None = None,
     test_size: float = DEFAULT_TEST_SIZE,
     random_state: int = DEFAULT_RANDOM_STATE,
     cv_folds: int = DEFAULT_CV_FOLDS,
@@ -219,6 +285,7 @@ def train_and_evaluate(
         shuffle=True,
         random_state=random_state,
     )
+    cv_started = perf_counter()
     cv_results = cross_validate(
         model,
         x_train,
@@ -243,7 +310,10 @@ def train_and_evaluate(
         },
         error_score="raise",
     )
+    cross_validation_seconds = perf_counter() - cv_started
+    fit_started = perf_counter()
     model.fit(x_train, y_train)
+    fit_seconds = perf_counter() - fit_started
     test_metrics = _evaluate(model, x_test, y_test, list(model.classes_))
 
     metrics: dict[str, Any] = {
@@ -267,7 +337,12 @@ def train_and_evaluate(
             "std_recall": float(np.std(cv_results["test_recall_macro"])),
             "mean_f1": float(np.mean(cv_results["test_f1_macro"])),
             "std_f1": float(np.std(cv_results["test_f1_macro"])),
+            "fold_f1_scores": [
+                float(value) for value in cv_results["test_f1_macro"]
+            ],
+            "total_seconds": cross_validation_seconds,
         },
+        "training_time_seconds": fit_seconds,
         "stratified_test": test_metrics,
     }
 
@@ -275,7 +350,7 @@ def train_and_evaluate(
     if different_seed_labels_path is not None:
         different_seed_features, different_seed_labels = _load_dataset(
             different_seed_labels_path,
-            db_path,
+            different_seed_db_path or db_path,
         )
         if set(different_seed_labels.unique()) != set(model.classes_):
             raise ValueError(
@@ -289,6 +364,9 @@ def train_and_evaluate(
         )
         metrics["different_seed_evaluation"]["labels_file"] = str(
             different_seed_labels_path
+        )
+        metrics["different_seed_evaluation"]["database_file"] = str(
+            different_seed_db_path or db_path
         )
 
     if include_isolation_forest:
@@ -315,6 +393,27 @@ def train_and_evaluate(
             ["benign", "anomaly"],
         )
 
+    logistic_regression = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=random_state,
+        ),
+    )
+    baseline_started = perf_counter()
+    logistic_regression.fit(x_train, y_train)
+    logistic_fit_seconds = perf_counter() - baseline_started
+    logistic_predictions = logistic_regression.predict(x_test)
+    metrics["logistic_regression_baseline"] = _classification_metrics(
+        y_test,
+        logistic_predictions,
+        list(model.classes_),
+    )
+    metrics["logistic_regression_baseline"]["training_time_seconds"] = (
+        logistic_fit_seconds
+    )
+
     model_file = Path(model_path)
     metrics_file = Path(metrics_path)
     model_file.parent.mkdir(parents=True, exist_ok=True)
@@ -333,15 +432,28 @@ def train_and_evaluate(
     except OSError:
         logger.exception("Could not save model or metrics output.")
         raise
+    _write_result_tables(
+        metrics_file.parent,
+        features,
+        labels,
+        model,
+        metrics,
+    )
     return metrics
 
 
 def main() -> None:
+    from config.environment import database_path
+
     parser = argparse.ArgumentParser(
         description="Train and evaluate the honeypot Random Forest model."
     )
     parser.add_argument("--labels", type=Path, default=DEFAULT_LABELS_PATH)
-    parser.add_argument("--database", type=Path, default=DEFAULT_DB_PATH)
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=database_path() or DEFAULT_DB_PATH,
+    )
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--metrics", type=Path, default=DEFAULT_METRICS_PATH)
     parser.add_argument(
@@ -349,6 +461,7 @@ def main() -> None:
         type=Path,
         help="separate labels CSV from a simulation run with a different seed",
     )
+    parser.add_argument("--different-seed-database", type=Path)
     parser.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
     parser.add_argument("--cv-folds", type=int, default=DEFAULT_CV_FOLDS)
     parser.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
@@ -364,6 +477,7 @@ def main() -> None:
         model_path=args.model,
         metrics_path=args.metrics,
         different_seed_labels_path=args.different_seed_labels,
+        different_seed_db_path=args.different_seed_database,
         random_state=args.random_state,
         cv_folds=args.cv_folds,
         test_size=args.test_size,

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.data import DashboardDatabaseError, load_dashboard_data
+from config.environment import load_dotenv
 from database.db import DEFAULT_DB_PATH
 
 
@@ -58,6 +59,7 @@ def _render_alerts(alerts: pd.DataFrame) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     st.set_page_config(
         page_title="Honeypot observability",
         page_icon=":material/shield:",

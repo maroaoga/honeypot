@@ -1,0 +1,11 @@
+session_id,label
+1511,sql_injection
+1512,benign
+1513,port_scan
+1514,brute_force
+1515,port_scan
+1516,sql_injection
+1517,directory_probe
+1518,benign
+1519,directory_probe
+1520,brute_force

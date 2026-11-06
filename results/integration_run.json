@@ -1,0 +1,16 @@
+{
+  "simulated_sessions": 10,
+  "classified_sessions": 10,
+  "classifications": {
+    "benign": 3,
+    "brute_force": 2,
+    "directory_probe": 2,
+    "port_scan": 2,
+    "sql_injection": 1
+  },
+  "adaptive_actions": 12,
+  "alerts": 6,
+  "dashboard_sessions": 1510,
+  "dashboard_events": 10837,
+  "labels_path": "results\\integration_labels.csv"
+}

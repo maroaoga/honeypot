@@ -1,0 +1,378 @@
+{
+  "model": "RandomForestClassifier",
+  "features": [
+    "event_count",
+    "tcp_connection_count",
+    "http_request_count",
+    "login_attempt_count",
+    "unique_usernames",
+    "unique_paths",
+    "session_duration_seconds",
+    "attempts_per_minute",
+    "payload_length_chars",
+    "error_count",
+    "error_ratio",
+    "unique_event_types",
+    "source_attempts_60s",
+    "source_distinct_usernames_60s",
+    "source_request_rate_per_second_60s"
+  ],
+  "label_counts": {
+    "brute_force": 300,
+    "port_scan": 300,
+    "benign": 300,
+    "directory_probe": 300,
+    "sql_injection": 300
+  },
+  "split": {
+    "strategy": "stratified train_test_split",
+    "test_size": 0.25,
+    "random_state": 42,
+    "training_samples": 1125,
+    "test_samples": 375
+  },
+  "cross_validation": {
+    "strategy": "StratifiedKFold",
+    "folds": 5,
+    "scoring": "macro average",
+    "mean_precision": 0.9869094220826252,
+    "std_precision": 0.008017687416972463,
+    "mean_recall": 0.9866666666666667,
+    "std_recall": 0.00795046391999923,
+    "mean_f1": 0.9866630435189302,
+    "std_f1": 0.007950341845363168,
+    "fold_f1_scores": [
+      0.9911067193675891,
+      0.9733333333333334,
+      0.9911067193675891,
+      0.9822134387351777,
+      0.9955550067909618
+    ],
+    "total_seconds": 1.4323100000037812
+  },
+  "training_time_seconds": 0.2621041999955196,
+  "stratified_test": {
+    "sample_count": 375,
+    "accuracy": 0.992,
+    "macro_precision": 0.9920341394025604,
+    "macro_recall": 0.992,
+    "macro_f1": 0.9919996444286413,
+    "macro_false_positive_rate": 0.002,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.9864864864864865,
+        "recall": 0.9733333333333334,
+        "f1": 0.9798657718120806,
+        "support": 75,
+        "false_positive_rate": 0.0033333333333333335
+      },
+      "brute_force": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 75,
+        "false_positive_rate": 0.0
+      },
+      "directory_probe": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 75,
+        "false_positive_rate": 0.0
+      },
+      "port_scan": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 75,
+        "false_positive_rate": 0.0
+      },
+      "sql_injection": {
+        "precision": 0.9736842105263158,
+        "recall": 0.9866666666666667,
+        "f1": 0.9801324503311258,
+        "support": 75,
+        "false_positive_rate": 0.006666666666666667
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "brute_force",
+        "directory_probe",
+        "port_scan",
+        "sql_injection"
+      ],
+      "values": [
+        [
+          73,
+          0,
+          0,
+          0,
+          2
+        ],
+        [
+          0,
+          75,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          75,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          75,
+          0
+        ],
+        [
+          1,
+          0,
+          0,
+          0,
+          74
+        ]
+      ]
+    },
+    "prediction_time_seconds": 0.013468900011503138,
+    "prediction_time_per_session_ms": 0.0359170666973417
+  },
+  "different_seed_evaluation": {
+    "sample_count": 1500,
+    "accuracy": 0.9893333333333333,
+    "macro_precision": 0.989468066180395,
+    "macro_recall": 0.9893333333333333,
+    "macro_f1": 0.9893314366998578,
+    "macro_false_positive_rate": 0.002666666666666667,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.9863013698630136,
+        "recall": 0.96,
+        "f1": 0.972972972972973,
+        "support": 300,
+        "false_positive_rate": 0.0033333333333333335
+      },
+      "brute_force": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 300,
+        "false_positive_rate": 0.0
+      },
+      "directory_probe": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 300,
+        "false_positive_rate": 0.0
+      },
+      "port_scan": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 300,
+        "false_positive_rate": 0.0
+      },
+      "sql_injection": {
+        "precision": 0.961038961038961,
+        "recall": 0.9866666666666667,
+        "f1": 0.9736842105263158,
+        "support": 300,
+        "false_positive_rate": 0.01
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "brute_force",
+        "directory_probe",
+        "port_scan",
+        "sql_injection"
+      ],
+      "values": [
+        [
+          288,
+          0,
+          0,
+          0,
+          12
+        ],
+        [
+          0,
+          300,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          300,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          300,
+          0
+        ],
+        [
+          4,
+          0,
+          0,
+          0,
+          296
+        ]
+      ]
+    },
+    "prediction_time_seconds": 0.0211462000006577,
+    "prediction_time_per_session_ms": 0.014097466667105133,
+    "labels_file": "results\\different_seed_labels.csv",
+    "database_file": "results\\evaluation.db"
+  },
+  "isolation_forest_baseline": {
+    "sample_count": 375,
+    "accuracy": 0.416,
+    "macro_precision": 0.5460687960687961,
+    "macro_recall": 0.56,
+    "macro_f1": 0.4105677927782443,
+    "macro_false_positive_rate": 0.44000000000000006,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.22727272727272727,
+        "recall": 0.8,
+        "f1": 0.35398230088495575,
+        "support": 75,
+        "false_positive_rate": 0.68
+      },
+      "anomaly": {
+        "precision": 0.8648648648648649,
+        "recall": 0.32,
+        "f1": 0.46715328467153283,
+        "support": 300,
+        "false_positive_rate": 0.2
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "anomaly"
+      ],
+      "values": [
+        [
+          60,
+          15
+        ],
+        [
+          204,
+          96
+        ]
+      ]
+    }
+  },
+  "logistic_regression_baseline": {
+    "sample_count": 375,
+    "accuracy": 0.76,
+    "macro_precision": 0.8201262439815731,
+    "macro_recall": 0.76,
+    "macro_f1": 0.7426902604674162,
+    "macro_false_positive_rate": 0.06,
+    "false_positive_rate_definition": "Mean of per-class one-vs-rest FP/(FP+TN) values.",
+    "per_class": {
+      "benign": {
+        "precision": 0.8378378378378378,
+        "recall": 0.41333333333333333,
+        "f1": 0.5535714285714286,
+        "support": 75,
+        "false_positive_rate": 0.02
+      },
+      "brute_force": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 75,
+        "false_positive_rate": 0.0
+      },
+      "directory_probe": {
+        "precision": 0.6521739130434783,
+        "recall": 1.0,
+        "f1": 0.7894736842105263,
+        "support": 75,
+        "false_positive_rate": 0.13333333333333333
+      },
+      "port_scan": {
+        "precision": 1.0,
+        "recall": 0.4666666666666667,
+        "f1": 0.6363636363636364,
+        "support": 75,
+        "false_positive_rate": 0.0
+      },
+      "sql_injection": {
+        "precision": 0.6106194690265486,
+        "recall": 0.92,
+        "f1": 0.7340425531914894,
+        "support": 75,
+        "false_positive_rate": 0.14666666666666667
+      }
+    },
+    "confusion_matrix": {
+      "labels_in_order": [
+        "benign",
+        "brute_force",
+        "directory_probe",
+        "port_scan",
+        "sql_injection"
+      ],
+      "values": [
+        [
+          31,
+          0,
+          0,
+          0,
+          44
+        ],
+        [
+          0,
+          75,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          75,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          40,
+          35,
+          0
+        ],
+        [
+          6,
+          0,
+          0,
+          0,
+          69
+        ]
+      ]
+    },
+    "training_time_seconds": 0.0648022000095807
+  }
+}

@@ -31,6 +31,17 @@ def test_initialize_database_is_repeatable(db_path):
     assert list_sessions(db_path=db_path) == []
 
 
+def test_new_database_timestamps_include_subsecond_precision(db_path):
+    session_id = create_session("127.0.0.1", db_path=db_path)
+    event_id = create_event(session_id, "connection", db_path=db_path)
+
+    session = get_session(session_id, db_path=db_path)
+    event = get_event(event_id, db_path=db_path)
+
+    assert "." in session["started_at"]
+    assert "." in event["occurred_at"]
+
+
 def test_create_and_query_all_record_types(db_path):
     session_id = create_session("127.0.0.1", db_path=db_path)
     event_id = create_event(
@@ -86,6 +97,27 @@ def test_queries_can_filter_by_session_and_limit(db_path):
     assert len(list_events(limit=1, db_path=db_path)) == 1
 
 
+def test_session_and_action_queries_support_parameterized_offsets(db_path):
+    session_ids = [
+        create_session("127.0.0.1", db_path=db_path)
+        for _ in range(3)
+    ]
+    for session_id in session_ids:
+        create_adaptive_action(
+            session_id,
+            "classification_observed",
+            db_path=db_path,
+        )
+
+    assert [
+        row["id"] for row in list_sessions(limit=2, offset=1, db_path=db_path)
+    ] == session_ids[1::-1]
+    assert [
+        row["session_id"]
+        for row in list_adaptive_actions(limit=2, offset=1, db_path=db_path)
+    ] == session_ids[1::-1]
+
+
 def test_parameterized_values_are_stored_as_data(db_path):
     session_id = create_session("127.0.0.1", db_path=db_path)
     event_id = create_event(
@@ -116,6 +148,7 @@ def test_parameterized_values_are_stored_as_data(db_path):
         (lambda path: create_adaptive_action(1, "", db_path=path), "action_type"),
         (lambda path: get_session(True, db_path=path), "session_id"),
         (lambda path: list_events(limit=0, db_path=path), "limit"),
+        (lambda path: list_sessions(offset=-1, db_path=path), "offset"),
     ],
 )
 def test_rejects_invalid_input(db_path, operation, message):

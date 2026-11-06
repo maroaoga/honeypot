@@ -1,0 +1,213 @@
+{
+  "training": {
+    "date_generated_utc": "2026-11-06T13:09:29.241458+00:00",
+    "config_file": "simulator.yaml",
+    "seed": 20261106,
+    "total_sessions": 1500,
+    "session_counts_by_class": {
+      "benign": 300,
+      "brute_force": 300,
+      "directory_probe": 300,
+      "port_scan": 300,
+      "sql_injection": 300
+    },
+    "class_percentages": {
+      "benign": 20.0,
+      "brute_force": 20.0,
+      "directory_probe": 20.0,
+      "port_scan": 20.0,
+      "sql_injection": 20.0
+    },
+    "event_counts_by_class": {
+      "benign": 600,
+      "brute_force": 8852,
+      "directory_probe": 300,
+      "port_scan": 456,
+      "sql_injection": 600
+    },
+    "total_events": 10808,
+    "unique_loopback_source_ips": 3,
+    "brute_force_attempts_per_session": {
+      "minimum": 5,
+      "mean": 28.123333333333335,
+      "maximum": 50
+    },
+    "simulator_config": {
+      "seed": 20261106,
+      "timing": {
+        "min_delay_seconds": 0,
+        "max_delay_seconds": 0,
+        "low_and_slow_min_delay_seconds": 0.05,
+        "low_and_slow_max_delay_seconds": 0.1,
+        "low_and_slow_probability": 0.2
+      },
+      "volumes": {
+        "brute_force_sessions": 300,
+        "port_scan_sessions": 300,
+        "sql_injection_sessions": 300,
+        "directory_probe_sessions": 300,
+        "benign_sessions": 300,
+        "brute_force_attempt_min": 5,
+        "brute_force_attempt_max": 50
+      },
+      "source_ips": [
+        "127.0.0.1",
+        "127.0.0.2",
+        "127.0.0.3"
+      ]
+    },
+    "labels_file": "train_labels.csv",
+    "features": [
+      {
+        "name": "event_count",
+        "dtype": "int64"
+      },
+      {
+        "name": "tcp_connection_count",
+        "dtype": "int64"
+      },
+      {
+        "name": "http_request_count",
+        "dtype": "int64"
+      },
+      {
+        "name": "login_attempt_count",
+        "dtype": "int64"
+      },
+      {
+        "name": "unique_usernames",
+        "dtype": "int64"
+      },
+      {
+        "name": "unique_paths",
+        "dtype": "int64"
+      },
+      {
+        "name": "session_duration_seconds",
+        "dtype": "float64"
+      },
+      {
+        "name": "attempts_per_minute",
+        "dtype": "float64"
+      },
+      {
+        "name": "payload_length_chars",
+        "dtype": "int64"
+      },
+      {
+        "name": "error_count",
+        "dtype": "int64"
+      },
+      {
+        "name": "error_ratio",
+        "dtype": "float64"
+      },
+      {
+        "name": "unique_event_types",
+        "dtype": "int64"
+      },
+      {
+        "name": "source_attempts_60s",
+        "dtype": "int64"
+      },
+      {
+        "name": "source_distinct_usernames_60s",
+        "dtype": "int64"
+      },
+      {
+        "name": "source_request_rate_per_second_60s",
+        "dtype": "float64"
+      }
+    ],
+    "feature_columns": [
+      "event_count",
+      "tcp_connection_count",
+      "http_request_count",
+      "login_attempt_count",
+      "unique_usernames",
+      "unique_paths",
+      "session_duration_seconds",
+      "attempts_per_minute",
+      "payload_length_chars",
+      "error_count",
+      "error_ratio",
+      "unique_event_types",
+      "source_attempts_60s",
+      "source_distinct_usernames_60s",
+      "source_request_rate_per_second_60s"
+    ],
+    "label_in_feature_columns": false,
+    "legacy_payload_length_importance": 0.5032586753309611,
+    "new_payload_length_importance": 0.3783035961612768,
+    "legacy_payload_length_rank": 1,
+    "new_payload_length_rank": 1,
+    "payload_length_importance_decreased": true,
+    "payload_length_rank_changed": false,
+    "payload_length_remains_most_important": true
+  },
+  "different_seed_evaluation": {
+    "date_generated_utc": "2026-11-06T13:27:11.968671+00:00",
+    "config_file": "simulator_evaluation.yaml",
+    "seed": 20261107,
+    "total_sessions": 1500,
+    "session_counts_by_class": {
+      "benign": 300,
+      "brute_force": 300,
+      "directory_probe": 300,
+      "port_scan": 300,
+      "sql_injection": 300
+    },
+    "class_percentages": {
+      "benign": 20.0,
+      "brute_force": 20.0,
+      "directory_probe": 20.0,
+      "port_scan": 20.0,
+      "sql_injection": 20.0
+    },
+    "event_counts_by_class": {
+      "benign": 600,
+      "brute_force": 8219,
+      "directory_probe": 300,
+      "port_scan": 455,
+      "sql_injection": 600
+    },
+    "total_events": 10174,
+    "unique_loopback_source_ips": 3,
+    "brute_force_attempts_per_session": {
+      "minimum": 5,
+      "mean": 25.966666666666665,
+      "maximum": 50
+    },
+    "simulator_config": {
+      "seed": 20261107,
+      "timing": {
+        "min_delay_seconds": 0,
+        "max_delay_seconds": 0,
+        "low_and_slow_min_delay_seconds": 0.05,
+        "low_and_slow_max_delay_seconds": 0.1,
+        "low_and_slow_probability": 0.2
+      },
+      "volumes": {
+        "brute_force_sessions": 300,
+        "port_scan_sessions": 300,
+        "sql_injection_sessions": 300,
+        "directory_probe_sessions": 300,
+        "benign_sessions": 300,
+        "brute_force_attempt_min": 5,
+        "brute_force_attempt_max": 50
+      },
+      "source_ips": [
+        "127.0.0.1",
+        "127.0.0.2",
+        "127.0.0.3"
+      ]
+    },
+    "labels_file": "different_seed_labels.csv"
+  },
+  "metrics_file": "metrics.json",
+  "feature_head_file": "feature_head.csv",
+  "feature_means_file": "feature_means_by_class.csv",
+  "feature_importance_file": "feature_importances.csv",
+  "confusion_matrix_plot": "confusion_matrix.png",
+  "feature_importance_plot": "feature_importance.png"
+}

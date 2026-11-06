@@ -1,6 +1,8 @@
 """A fake Flask login page that is intended to run on localhost only."""
 
 import logging
+import argparse
+import ipaddress
 import sqlite3
 from pathlib import Path
 
@@ -43,7 +45,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> Flask:
     @app.before_request
     def log_request() -> Response | None:
         remote_addr = request.remote_addr
-        if remote_addr != LOCALHOST:
+        try:
+            is_loopback = ipaddress.ip_address(remote_addr).is_loopback
+        except (TypeError, ValueError):
+            is_loopback = False
+        if not is_loopback:
             abort(403)
 
         try:
@@ -132,6 +138,20 @@ def run_web_service(
     app.run(host=LOCALHOST, port=port, debug=False, use_reloader=False)
 
 
+def main(argv: list[str] | None = None) -> None:
+    from config.environment import database_path
+    from config.loader import load_config
+
+    parser = argparse.ArgumentParser(description="Run the localhost web honeypot.")
+    parser.add_argument("--config", type=Path)
+    args = parser.parse_args(argv)
+    settings = load_config(args.config)
+    logging.basicConfig(level=getattr(logging, settings.log_level))
+    run_web_service(
+        port=settings.web_port,
+        db_path=database_path() or DEFAULT_DB_PATH,
+    )
+
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    run_web_service()
+    main()

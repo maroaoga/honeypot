@@ -71,6 +71,18 @@ def test_non_loopback_request_is_rejected(client_and_db):
     assert list_sessions(db_path=db_path) == []
 
 
+def test_loopback_alias_is_accepted_and_recorded(client_and_db):
+    client, db_path = client_and_db
+
+    response = client.get(
+        "/login",
+        environ_overrides={"REMOTE_ADDR": "127.0.0.2"},
+    )
+
+    assert response.status_code == 200
+    assert list_sessions(db_path=db_path)[0]["source_ip"] == "127.0.0.2"
+
+
 def test_app_uses_loopback_only_when_running(monkeypatch, tmp_path):
     from honeypot import web_service
 
@@ -85,3 +97,28 @@ def test_app_uses_loopback_only_when_running(monkeypatch, tmp_path):
     assert captured["host"] == LOCALHOST
     assert captured["debug"] is False
     assert captured["use_reloader"] is False
+
+
+def test_web_entrypoint_uses_validated_yaml_and_env_database(tmp_path, monkeypatch):
+    from honeypot import web_service
+
+    settings_file = tmp_path / "settings.yaml"
+    settings_file.write_text(
+        "server:\n  host: '127.0.0.1'\n  tcp_port: 8023\n  web_port: 9091\n"
+        "logging:\n  level: WARNING\n",
+        encoding="utf-8",
+    )
+    captured = {}
+    monkeypatch.setenv("HONEYPOT_DB_PATH", str(tmp_path / "custom.db"))
+    monkeypatch.setattr(
+        web_service,
+        "run_web_service",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    web_service.main(["--config", str(settings_file)])
+
+    assert captured == {
+        "port": 9091,
+        "db_path": str(tmp_path / "custom.db"),
+    }

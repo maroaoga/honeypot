@@ -3,6 +3,7 @@
 import json
 import logging
 import sqlite3
+from collections import Counter, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ FEATURE_COLUMNS = (
     "error_count",
     "error_ratio",
     "unique_event_types",
+    "source_attempts_60s",
+    "source_distinct_usernames_60s",
+    "source_request_rate_per_second_60s",
 )
 ERROR_EVENT_TYPES = frozenset({"tcp_protocol_error", "http_error"})
 LOGIN_EVENT_TYPES = frozenset({"tcp_login_attempt", "http_login_attempt"})
@@ -134,6 +138,94 @@ def _session_features(
     }
 
 
+def _source_window_features(
+    sessions: dict[
+        int,
+        tuple[str, str, list[tuple[int, str, str, dict[str, Any]]]],
+    ],
+) -> dict[int, dict[str, int | float]]:
+    source_events: dict[str, list[tuple[datetime, int, str, dict[str, Any]]]] = {}
+    session_anchors: dict[int, tuple[str, datetime, int]] = {}
+
+    for session_id, (started_at, source_ip, events) in sessions.items():
+        anchor = (
+            _parse_timestamp(started_at, session_id=session_id, field="started_at"),
+            0,
+        )
+        for event_id, event_type, occurred_at, details in events:
+            timestamp = _parse_timestamp(
+                occurred_at,
+                session_id=session_id,
+                field="event",
+            )
+            source_events.setdefault(source_ip, []).append(
+                (timestamp, event_id, event_type, details)
+            )
+            anchor = max(anchor, (timestamp, event_id))
+        session_anchors[session_id] = (source_ip, anchor[0], anchor[1])
+
+    output: dict[int, dict[str, int | float]] = {}
+    for source_ip, events in source_events.items():
+        events.sort(key=lambda event: (event[0], event[1]))
+        anchors = sorted(
+            (
+                (timestamp, event_id, session_id)
+                for session_id, (ip, timestamp, event_id) in session_anchors.items()
+                if ip == source_ip
+            ),
+            key=lambda anchor: (anchor[0], anchor[1]),
+        )
+        active: deque[tuple[datetime, int, str, str | None]] = deque()
+        username_counts: Counter[str] = Counter()
+        login_attempts = 0
+        requests = 0
+        next_event = 0
+
+        for anchor_time, anchor_event_id, session_id in anchors:
+            while next_event < len(events) and (
+                events[next_event][0], events[next_event][1]
+            ) <= (anchor_time, anchor_event_id):
+                event_time, event_id, event_type, details = events[next_event]
+                username = None
+                if event_type in LOGIN_EVENT_TYPES:
+                    login_attempts += 1
+                    value = details.get("username")
+                    if isinstance(value, str):
+                        username = value
+                        username_counts[username] += 1
+                if event_type in {"tcp_connection", "http_request"}:
+                    requests += 1
+                active.append((event_time, event_id, event_type, username))
+                next_event += 1
+
+            cutoff = anchor_time.timestamp() - 60
+            while active and active[0][0].timestamp() < cutoff:
+                _, _, event_type, username = active.popleft()
+                if event_type in LOGIN_EVENT_TYPES:
+                    login_attempts -= 1
+                if event_type in {"tcp_connection", "http_request"}:
+                    requests -= 1
+                if username is not None:
+                    username_counts[username] -= 1
+                    if username_counts[username] == 0:
+                        del username_counts[username]
+
+            output[session_id] = {
+                "source_attempts_60s": login_attempts,
+                "source_distinct_usernames_60s": len(username_counts),
+                "source_request_rate_per_second_60s": requests / 60,
+            }
+
+    for session_id, (source_ip, anchor_time, _) in session_anchors.items():
+        if session_id not in output:
+            output[session_id] = {
+                "source_attempts_60s": 0,
+                "source_distinct_usernames_60s": 0,
+                "source_request_rate_per_second_60s": 0.0,
+            }
+    return output
+
+
 def extract_features(db_path: str | Path = DEFAULT_DB_PATH) -> pd.DataFrame:
     """Return one numeric feature row per session, indexed by session ID.
 
@@ -141,13 +233,16 @@ def extract_features(db_path: str | Path = DEFAULT_DB_PATH) -> pd.DataFrame:
     """
     path = _validate_db_path(db_path)
     query = (
-        "SELECT s.id AS session_id, s.started_at, "
-        "e.event_type, e.occurred_at, e.details "
+        "SELECT s.id AS session_id, s.started_at, s.source_ip, "
+        "e.id AS event_id, e.event_type, e.occurred_at, e.details "
         "FROM sessions AS s "
         "LEFT JOIN events AS e ON e.session_id = s.id "
         "ORDER BY s.id, e.id"
     )
-    sessions: dict[int, tuple[str, list[tuple[str, str, dict[str, Any]]]]] = {}
+    sessions: dict[
+        int,
+        tuple[str, str, list[tuple[int, str, str, dict[str, Any]]]],
+    ] = {}
     try:
         with sqlite3.connect(path) as connection:
             rows = connection.execute(query).fetchall()
@@ -155,9 +250,17 @@ def extract_features(db_path: str | Path = DEFAULT_DB_PATH) -> pd.DataFrame:
         logger.exception("Could not read sessions for feature extraction from '%s'.", path)
         raise
 
-    for session_id, started_at, event_type, occurred_at, details_json in rows:
+    for (
+        session_id,
+        started_at,
+        source_ip,
+        event_id,
+        event_type,
+        occurred_at,
+        details_json,
+    ) in rows:
         if session_id not in sessions:
-            sessions[session_id] = (started_at, [])
+            sessions[session_id] = (started_at, source_ip, [])
         if event_type is None:
             continue
         try:
@@ -166,14 +269,24 @@ def extract_features(db_path: str | Path = DEFAULT_DB_PATH) -> pd.DataFrame:
             raise ValueError(
                 f"Session {session_id} contains invalid event details JSON."
             ) from exc
-        sessions[session_id][1].append((event_type, occurred_at, details))
+        sessions[session_id][2].append((event_id, event_type, occurred_at, details))
+
+    source_features = _source_window_features(sessions)
 
     records = [
         {
             "session_id": session_id,
-            **_session_features(session_id, started_at, events),
+            **_session_features(
+                session_id,
+                started_at,
+                [
+                    (event_type, occurred_at, details)
+                    for _, event_type, occurred_at, details in events
+                ],
+            ),
+            **source_features[session_id],
         }
-        for session_id, (started_at, events) in sessions.items()
+        for session_id, (started_at, _, events) in sessions.items()
     ]
     if not records:
         return pd.DataFrame(
@@ -193,6 +306,9 @@ def extract_features(db_path: str | Path = DEFAULT_DB_PATH) -> pd.DataFrame:
                 "error_count": "int64",
                 "error_ratio": "float64",
                 "unique_event_types": "int64",
+                "source_attempts_60s": "int64",
+                "source_distinct_usernames_60s": "int64",
+                "source_request_rate_per_second_60s": "float64",
             }
         )
     return pd.DataFrame.from_records(records).set_index("session_id")[list(FEATURE_COLUMNS)]

@@ -1,12 +1,22 @@
 seed: 20261108
 
 timing:
-  min_delay_seconds: 0.02
-  max_delay_seconds: 0.05
+  min_delay_seconds: 0
+  max_delay_seconds: 0
+  low_and_slow_min_delay_seconds: 0
+  low_and_slow_max_delay_seconds: 0
+  low_and_slow_probability: 0
 
 volumes:
-  brute_force_attempts: 3
-  port_scan_probes: 2
-  sql_injection_probes: 2
-  directory_probes: 2
-  benign_sessions: 3
+  brute_force_sessions: 2
+  port_scan_sessions: 2
+  sql_injection_sessions: 2
+  directory_probe_sessions: 2
+  benign_sessions: 2
+  brute_force_attempt_min: 5
+  brute_force_attempt_max: 8
+
+source_ips:
+  - "127.0.0.1"
+  - "127.0.0.2"
+  - "127.0.0.3"

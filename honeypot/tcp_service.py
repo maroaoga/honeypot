@@ -1,6 +1,7 @@
 """A line-based, fake login service that listens only on localhost."""
 
 import asyncio
+import argparse
 import ipaddress
 import logging
 import sqlite3
@@ -17,6 +18,7 @@ LOCALHOST: Final = "127.0.0.1"
 DEFAULT_TCP_PORT: Final = 8022
 MAX_LINE_BYTES: Final = 512
 CLIENT_TIMEOUT_SECONDS: Final = 15
+MAX_ATTEMPTS_PER_CONNECTION: Final = 50
 
 
 def _client_ip(writer: asyncio.StreamWriter) -> str:
@@ -34,7 +36,7 @@ async def handle_client(
     *,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> None:
-    """Log a client connection and one fake username/password attempt."""
+    """Log one connection and up to 50 fake username/password attempts."""
     session_id: int | None = None
     source_ip = _client_ip(writer)
     controls = None
@@ -63,31 +65,34 @@ async def handle_client(
             return
         if controls is not None and controls.scan_banner:
             writer.write(f"{SCAN_BANNER}\n".encode("utf-8"))
-        writer.write(b"Username: ")
-        await writer.drain()
-        username = await _read_line(reader)
-        if username is None:
-            create_event(session_id, "tcp_disconnect", db_path=db_path)
-            return
+        for attempt_number in range(MAX_ATTEMPTS_PER_CONNECTION):
+            writer.write(b"Username: ")
+            await writer.drain()
+            username = await _read_line(reader)
+            if username is None:
+                create_event(session_id, "tcp_disconnect", db_path=db_path)
+                return
 
-        writer.write(b"Password: ")
-        await writer.drain()
-        password = await _read_line(reader)
-        if password is None:
-            create_event(session_id, "tcp_disconnect", db_path=db_path)
-            return
+            writer.write(b"Password: ")
+            await writer.drain()
+            password = await _read_line(reader)
+            if password is None:
+                create_event(session_id, "tcp_disconnect", db_path=db_path)
+                return
 
-        create_event(
-            session_id,
-            "tcp_login_attempt",
-            {
-                "username": username,
-                "password_length": len(password),
-            },
-            db_path=db_path,
-        )
-        writer.write(b"Login failed.\n")
-        await writer.drain()
+            create_event(
+                session_id,
+                "tcp_login_attempt",
+                {
+                    "username": username,
+                    "password_length": len(password),
+                },
+                db_path=db_path,
+            )
+            writer.write(b"Login failed.\n")
+            await writer.drain()
+            if attempt_number + 1 == MAX_ATTEMPTS_PER_CONNECTION:
+                return
     except (asyncio.TimeoutError, UnicodeDecodeError, ValueError) as exc:
         try:
             create_event(
@@ -163,6 +168,22 @@ async def run_tcp_service(
         await server.serve_forever()
 
 
+def main(argv: list[str] | None = None) -> None:
+    from config.loader import load_config
+    from config.environment import database_path
+
+    parser = argparse.ArgumentParser(description="Run the localhost TCP honeypot.")
+    parser.add_argument("--config", type=Path)
+    args = parser.parse_args(argv)
+    settings = load_config(args.config)
+    logging.basicConfig(level=getattr(logging, settings.log_level))
+    asyncio.run(
+        run_tcp_service(
+            port=settings.tcp_port,
+            db_path=database_path() or DEFAULT_DB_PATH,
+        )
+    )
+
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_tcp_service())
+    main()

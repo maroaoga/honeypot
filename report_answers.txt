@@ -1,304 +1,346 @@
-ADAPTIVE HONEYPOT - MEASURED PROJECT REPORT
+ADAPTIVE HONEYPOT - UPDATED MEASURED REPORT
 Generated: 2026-11-06
-Evidence source: local SQLite database, simulator CSV labels, checked-in YAML,
-saved ml/metrics.json, direct localhost service checks, pytest, and dashboard
-queries. All service traffic in these checks stayed on 127.0.0.1.
+Evidence: results/experiment_summary.json, results/metrics.json, the two
+SQLite experiment databases, saved labels/features/model, direct SQL and
+dashboard data queries, pytest/coverage output, and a fresh-venv run.
+This report replaces the earlier 50-sessions-per-class results.
 
 1. DATASET
 ----------
-The model-training simulation used config/simulator.yaml (seed 20261106,
-10 sessions per class, configured delay 0.05-0.20 seconds). The separate
-seed evaluation used config/simulator_evaluation.yaml (seed 20261107, same
-class volumes and delay). Both runs were recorded on 2026-11-06.
+Training data was generated on 2026-11-06 using config/simulator.yaml,
+seed 20261106. The independent-seed evaluation data was generated the same
+day using config/simulator_evaluation.yaml, seed 20261107. Each simulation
+contains 300 sessions per class (1,500 total, 20% each). Both used the same
+configured behavior: varied attack/benign inputs, 5-50 brute-force attempts
+per session, a 20% probability of configured 50-100 ms low-and-slow delays,
+and loopback source aliases 127.0.0.1, 127.0.0.2, and 127.0.0.3.
 
 Class             Training sessions/events     Different-seed sessions/events
-benign                         10 / 20                       10 / 20
-brute_force                    10 / 20                       10 / 20
-port_scan                      10 / 11                       10 / 14
-sql_injection                  10 / 20                       10 / 20
-directory_probe                10 / 10                       10 / 10
-TOTAL                          50 / 81                       50 / 84
+benign                         300 / 600                    300 / 600
+brute_force                    300 / 8852                   300 / 8219
+directory_probe                300 / 300                    300 / 300
+port_scan                      300 / 456                    300 / 455
+sql_injection                  300 / 600                    300 / 600
+TOTAL                         1500 / 10808                 1500 / 10174
 
-Every class is 20% of each 50-session dataset. The end-to-end run used
-config/integration.yaml (seed 20261108; delay 0.02-0.05 seconds), producing
-12 sessions and 21 events: benign 3/6, brute_force 3/6, port_scan 2/3,
-sql_injection 2/4, directory_probe 2/2 (sessions/events).
+The training brute-force attempt count ranged from 5 to 50, with mean
+28.123 attempts per session. The different-seed mean was 25.967. Ground-truth
+labels are stored separately in train_labels.csv and
+different_seed_labels.csv, not in event details or feature columns.
 
-The checked-in demo database contains 112 sessions, 186 events, 9 alerts,
-and 21 adaptive-action rows. It includes the 50 training, 50 different-seed,
-and 12 integration sessions. These are separate experiments; the saved
-Random Forest evaluation below uses only the 50 training labels and evaluates
-the other 50 labels separately.
-
-Feature schema (index is session_id; all feature columns are numeric):
+The feature matrix has 15 numeric columns plus session_id as its index:
 event_count int64; tcp_connection_count int64; http_request_count int64;
 login_attempt_count int64; unique_usernames int64; unique_paths int64;
 session_duration_seconds float64; attempts_per_minute float64;
 payload_length_chars int64; error_count int64; error_ratio float64;
-unique_event_types int64.
-No label or source-IP column is present in the feature DataFrame. Ground-truth
-labels are joined only after extraction for training/evaluation.
+unique_event_types int64; source_attempts_60s int64;
+source_distinct_usernames_60s int64;
+source_request_rate_per_second_60s float64.
+Neither label nor source IP is a feature. Source IP is used only to group
+events when computing the three numeric source-window features.
 
-First 10 training feature rows:
-session_id,event_count,tcp_connection_count,http_request_count,login_attempt_count,unique_usernames,unique_paths,session_duration_seconds,attempts_per_minute,payload_length_chars,error_count,error_ratio,unique_event_types
-1,2,1,0,1,1,0,0.0,60.0,22,0,0.0,2
-2,2,1,0,1,1,0,0.0,60.0,24,0,0.0,2
-3,2,1,0,1,1,0,0.0,60.0,22,0,0.0,2
-4,2,1,0,1,1,0,0.0,60.0,22,0,0.0,2
-5,2,1,0,1,1,0,0.0,60.0,22,0,0.0,2
-6,2,1,0,1,1,0,1.0,60.0,18,0,0.0,2
-7,2,1,0,1,1,0,0.0,60.0,18,0,0.0,2
-8,2,1,0,1,1,0,0.0,60.0,24,0,0.0,2
-9,2,1,0,1,1,0,0.0,60.0,24,0,0.0,2
-10,2,1,0,1,1,0,0.0,60.0,24,0,0.0,2
+First 10 rows of results/feature_head.csv (session_id is the index):
+session_id,event_count,tcp_connection_count,http_request_count,login_attempt_count,unique_usernames,unique_paths,session_duration_seconds,attempts_per_minute,payload_length_chars,error_count,error_ratio,unique_event_types,source_attempts_60s,source_distinct_usernames_60s,source_request_rate_per_second_60s
+1,36,1,0,35,5,0,1.811,1159.5803423522916,715,0,0.0,2,35,5,0.016666666666666666
+2,23,1,0,22,5,0,1.523,866.7104399212081,467,0,0.0,2,57,5,0.03333333333333333
+3,2,1,0,0,0,0,0.153,0.0,0,0,0.0,2,57,5,0.05
+4,11,1,0,10,4,0,1.724,348.0278422273782,197,0,0.0,2,67,5,0.06666666666666667
+5,2,0,1,1,1,1,0.14,60.0,146,0,0.0,2,1,1,0.016666666666666666
+6,1,0,1,0,0,1,0.091,0.0,1,0,0.0,1,67,5,0.08333333333333333
+7,1,0,1,0,0,1,0.073,0.0,11,0,0.0,1,67,5,0.1
+8,2,0,1,1,1,1,0.152,60.0,145,0,0.0,2,1,1,0.016666666666666666
+9,2,0,1,1,1,1,0.216,60.0,28,0,0.0,2,2,2,0.03333333333333333
+10,2,0,1,1,1,1,0.157,60.0,146,0,0.0,2,3,2,0.05
 
 2. HONEYPOT SERVICES
 --------------------
-The services were started for an actual 20-connection localhost check:
-10 TCP login attempts and 10 HTTP login POSTs. Both bound to 127.0.0.1
-(ephemeral test ports). The test produced 20 sessions and 40 events:
-10 tcp_connection, 10 tcp_login_attempt, 10 http_request, and
-10 http_login_attempt rows. Thus each of the 20 login connections had the
-expected connection/request row and login-attempt row. Password contents
-were not persisted; only password lengths were stored.
+An actual local service check sent 20 connections: 10 TCP logins and
+10 HTTP login POSTs. The services bound to 127.0.0.1 on ephemeral test ports.
+The database recorded 20 sessions and 40 events: 10 tcp_connection,
+10 tcp_login_attempt, 10 http_request, and 10 http_login_attempt rows.
+Events logged versus events expected: 40/40. Password contents were not
+stored; only lengths were recorded. The simulator also connected from the
+three loopback aliases; the listeners remained bound only to 127.0.0.1.
+Configured default listener addresses are 127.0.0.1:8022 (TCP) and
+127.0.0.1:8081 (web).
 
-Observed bad-input behavior:
-- Invalid UTF-8 TCP username: replied "Invalid input."; logged
-  tcp_protocol_error.
-- 600-byte TCP line: replied "Invalid input."; logged tcp_protocol_error.
-- Client disconnect after TCP prompt: connection closed; logged
-  tcp_disconnect.
-- Malformed web form bytes: returned HTTP 200 with the fake "Login failed"
-  page; logged the request and a login attempt.
-- 17,000-byte web body: returned HTTP 413; the incoming request was logged.
-- Service ports are validated before binding. The production/default service
-  addresses in the code are 127.0.0.1:8022 (TCP) and 127.0.0.1:8081 (web).
+Observed malformed/large/disconnected input behavior:
+- Invalid UTF-8 TCP username: service replied "Invalid input." and saved a
+  tcp_protocol_error event.
+- 600-byte TCP line: service replied "Invalid input." and saved a
+  tcp_protocol_error event. The configured line limit is 512 bytes.
+- Client disconnect during a TCP prompt: service logged tcp_disconnect and
+  continued running.
+- Malformed web form bytes: returned the fake login-failure page and logged
+  the request and attempt.
+- 17,000-byte web body: returned HTTP 413 and logged the request.
+- Submitted inputs were treated as data; none were executed.
 
 3. FEATURES
 -----------
-Feature purpose and computation:
-- event_count: count of session events; activity volume.
-- tcp_connection_count: count of tcp_connection rows; TCP engagement.
-- http_request_count: count of http_request rows; web probing/browsing.
-- login_attempt_count: count of TCP and HTTP login-attempt rows; credential
-  guessing intensity.
-- unique_usernames: distinct logged usernames; credential breadth.
-- unique_paths: distinct requested paths; path discovery breadth.
-- session_duration_seconds: last event minus first session timestamp; activity
-  span (timestamps have one-second resolution).
-- attempts_per_minute: login attempts * 60 / max(duration seconds, 1);
-  duration normalization without division by zero.
-- payload_length_chars: sum of username length, password length, and HTTP path
-  length; coarse input size without storing passwords.
-- error_count: count of tcp_protocol_error and http_error rows.
-- error_ratio: error_count / event_count, or 0 for no events.
-- unique_event_types: distinct event types; interaction variety.
+Feature computation and purpose:
+- event_count: count of events for the session; overall activity volume.
+- tcp_connection_count: count of tcp_connection events; TCP engagement.
+- http_request_count: count of http_request events; web interaction volume.
+- login_attempt_count: TCP plus HTTP login attempts; guessing intensity.
+- unique_usernames: distinct attempted usernames in the session.
+- unique_paths: distinct HTTP paths in the session.
+- session_duration_seconds: last event minus first session/event time.
+- attempts_per_minute: login attempts * 60 / max(duration seconds, 1).
+- payload_length_chars: username length plus password length plus HTTP path
+  length; password contents are not stored.
+- error_count: tcp_protocol_error plus http_error events.
+- error_ratio: error_count / event_count, or 0 when there are no events.
+- unique_event_types: number of distinct event types in the session.
+- source_attempts_60s: login attempts for the same source in the trailing
+  60-second window ending at that session's final event.
+- source_distinct_usernames_60s: distinct attempted usernames for that source
+  in the same trailing window.
+- source_request_rate_per_second_60s: TCP connections plus HTTP requests for
+  that source in the window, divided by 60 seconds.
 
-Per-class mean features from the 50-session training set:
-class,event_count,tcp_connection_count,http_request_count,login_attempt_count,unique_usernames,unique_paths,session_duration_seconds,attempts_per_minute,payload_length_chars,error_count,error_ratio,unique_event_types
-benign,2.0,0.0,1.0,1.0,1.0,1.0,0.2,60.0,22.6,0.0,0.0,2.0
-brute_force,2.0,1.0,0.0,1.0,1.0,0.0,0.1,60.0,22.0,0.0,0.0,2.0
-directory_probe,1.0,0.0,1.0,0.0,0.0,1.0,0.1,0.0,9.4,0.0,0.0,1.0
-port_scan,1.1,0.1,0.9,0.0,0.0,0.9,0.1,0.0,0.9,0.0,0.0,1.1
-sql_injection,2.0,0.0,1.0,1.0,1.0,1.0,0.0,60.0,25.0,0.0,0.0,2.0
+Per-class mean features from results/feature_means_by_class.csv:
+Class,event_count,tcp_connection_count,http_request_count,login_attempt_count,unique_usernames,unique_paths,session_duration_seconds,attempts_per_minute,payload_length_chars,error_count,error_ratio,unique_event_types,source_attempts_60s,source_distinct_usernames_60s,source_request_rate_per_second_60s
+benign,2.0,0.0,1.0,1.0,1.0,1.0,0.1431767,60.0,741.7333,0.0,0.0,2.0,163.6733,12.2433,0.4587222
+brute_force,29.5067,1.0,0.0,28.1233,4.7967,0.0,2.5928933,721.7913,589.2,0.0,0.0,2.3833,184.5433,11.77,0.4488889
+directory_probe,1.0,0.0,1.0,0.0,0.0,1.0,0.07169,0.0,8.96,0.0,0.0,1.0,164.3167,12.25,0.4772222
+port_scan,1.52,0.52,0.48,0.0,0.0,0.48,0.1126267,0.0,0.48,0.0,0.0,1.52,166.4733,12.2067,0.4799444
+sql_injection,2.0,0.0,1.0,1.0,1.0,1.0,0.1451667,60.0,24.6333,0.0,0.0,2.0,168.6433,12.5433,0.4831111
 
-There were no missing feature values in the training rows. Zero values are
-retained as meaningful observed absence (for example, error_count and
-error_ratio were zero for all 50 sessions; tcp_connection_count was zero for
-39; http_request_count for 11; login_attempt_count and unique_usernames for
-20; unique_paths for 11; session_duration_seconds for 45; attempts_per_minute
-for 20; payload_length_chars for 1). No imputation was needed.
+The 1,500 training rows had no missing feature values. Meaningful zero
+counts were: TCP connections 1,044 (69.6%); HTTP requests 456 (30.4%);
+login attempts 600 (40.0%); unique usernames 600 (40.0%); unique paths
+456 (30.4%); attempts/minute 600 (40.0%); payload length 156 (10.4%);
+error_count and error_ratio 1,500 each (100%). event_count,
+session_duration_seconds, unique_event_types, and all three source-window
+features had no zero values. No imputation was applied.
 
 4. MODEL AND EVALUATION
 -----------------------
-RandomForestClassifier; stratified 75/25 split, random_state=42; 37 training
-and 13 test samples; 100 trees. Precision/recall/F1 are macro-averaged where
-marked macro. FPR is the mean one-vs-rest FP/(FP+TN).
+Model: RandomForestClassifier, 100 trees, class_weight=balanced.
+Split: stratified 75/25 with random_state=42 (1,125 training, 375 test).
+Cross-validation: 5-fold stratified CV on the training split.
+False-positive rate is mean one-vs-rest FP/(FP+TN).
 
-Stratified test results:
-accuracy=0.9231; macro precision=0.9333; macro recall=0.9333;
-macro F1=0.9200; macro FPR=0.0182.
+Test-split summary:
+accuracy=0.9920; macro precision=0.9920; macro recall=0.9920;
+macro F1=0.9920; macro false-positive rate=0.0020.
 
 Class               Precision  Recall   F1       FPR      Support
-benign                 1.0000  1.0000  1.0000  0.0000       3
-brute_force            0.6667  1.0000  0.8000  0.0909       2
-directory_probe        1.0000  1.0000  1.0000  0.0000       3
-port_scan              1.0000  0.6667  0.8000  0.0000       3
-sql_injection          1.0000  1.0000  1.0000  0.0000       2
+benign                 0.9865  0.9733  0.9799  0.0033       75
+brute_force            1.0000  1.0000  1.0000  0.0000       75
+directory_probe        1.0000  1.0000  1.0000  0.0000       75
+port_scan              1.0000  1.0000  1.0000  0.0000       75
+sql_injection          0.9737  0.9867  0.9801  0.0067       75
 
-Confusion matrix (rows=true, columns=predicted; order: benign, brute_force,
-directory_probe, port_scan, sql_injection):
-[[3, 0, 0, 0, 0],
- [0, 2, 0, 0, 0],
- [0, 0, 3, 0, 0],
- [0, 1, 0, 2, 0],
- [0, 0, 0, 0, 2]]
+Confusion matrix (rows=true, columns=predicted; order: benign,
+brute_force, directory_probe, port_scan, sql_injection):
+[[73, 0, 0, 0, 2],
+ [0, 75, 0, 0, 0],
+ [0, 0, 75, 0, 0],
+ [0, 0, 0, 75, 0],
+ [1, 0, 0, 0, 74]]
+The three test errors were two benign sessions predicted sql_injection and
+one sql_injection session predicted benign.
 
-Five-fold stratified cross-validation on the training split:
-macro F1 = 0.9520 +/- 0.0960 (mean +/- standard deviation);
-macro precision = 0.9467 +/- 0.1067; macro recall = 0.9600 +/- 0.0800.
+Five-fold stratified cross-validation macro F1:
+0.98666 +/- 0.00795 (mean +/- standard deviation).
+Mean macro precision was 0.98691 +/- 0.00802; mean macro recall was
+0.98667 +/- 0.00795.
 
 Top 10 Random Forest feature importances:
-payload_length_chars 0.5033; tcp_connection_count 0.1018;
-http_request_count 0.0702; unique_paths 0.0699; attempts_per_minute 0.0653;
-login_attempt_count 0.0614; unique_usernames 0.0388; event_count 0.0342;
-unique_event_types 0.0336; session_duration_seconds 0.0216.
-error_count and error_ratio had importance 0.0 in this synthetic dataset.
+1. payload_length_chars 0.37830
+2. event_count 0.08812
+3. login_attempt_count 0.08340
+4. unique_usernames 0.08285
+5. attempts_per_minute 0.06957
+6. session_duration_seconds 0.06400
+7. tcp_connection_count 0.04928
+8. http_request_count 0.03747
+9. unique_event_types 0.03738
+10. unique_paths 0.03521
+The new source features ranked 11th (source_attempts_60s, 0.03355),
+12th (source_request_rate_per_second_60s, 0.02613), and 13th
+(source_distinct_usernames_60s, 0.01474). error_count and error_ratio were
+zero-importance features in this data.
 
-Different-seed dataset (seed 20261107), evaluated by the saved model without
-refitting: 50 samples; accuracy=0.9400; macro precision=0.9538; macro
-recall=0.9400; macro F1=0.9386; macro FPR=0.0150.
-Class                 Precision  Recall   F1       FPR     Support
-benign                   0.7692  1.0000  0.8696  0.0750      10
-brute_force              1.0000  1.0000  1.0000  0.0000      10
-directory_probe          1.0000  1.0000  1.0000  0.0000      10
-port_scan                1.0000  1.0000  1.0000  0.0000      10
-sql_injection            1.0000  0.7000  0.8235  0.0000      10
+Compared with the earlier payload-length importance of 0.50326, the new value
+is 0.37830 (about 24.8% lower); payload length remains rank 1. Its dominance
+weakened in magnitude, not in rank.
+
+Different-seed evaluation (seed 20261107, 1,500 sessions, model not refit):
+accuracy=0.98933; macro precision=0.98947; macro recall=0.98933;
+macro F1=0.98933; macro FPR=0.00267.
+
+Class               Precision  Recall   F1       FPR      Support
+benign                 0.9863  0.9600  0.9730  0.0033      300
+brute_force            1.0000  1.0000  1.0000  0.0000      300
+directory_probe        1.0000  1.0000  1.0000  0.0000      300
+port_scan              1.0000  1.0000  1.0000  0.0000      300
+sql_injection          0.9610  0.9867  0.9737  0.0100      300
 Different-seed confusion matrix (same class order):
-[[10, 0, 0, 0, 0],
- [0, 10, 0, 0, 0],
- [0, 0, 10, 0, 0],
- [0, 0, 0, 10, 0],
- [3, 0, 0, 0, 7]]
+[[288, 0, 0, 0, 12],
+ [0, 300, 0, 0, 0],
+ [0, 0, 300, 0, 0],
+ [0, 0, 0, 300, 0],
+ [4, 0, 0, 0, 296]]
+The observed errors were 12 benign sessions predicted sql_injection and
+4 sql_injection sessions predicted benign.
 
-Baseline on the same stratified test split: StandardScaler + Logistic
-Regression, accuracy=0.7692, macro precision=0.6533, macro recall=0.7333,
-macro F1=0.6700, macro one-vs-rest FPR=0.0582. Random Forest macro F1 was
-0.9200 on this split. The saved
-optional Isolation Forest baseline is binary benign/anomaly and is not a
-like-for-like five-class comparison (accuracy 0.1538, macro F1 0.1333).
+Baseline on the same held-out split: StandardScaler + Logistic Regression,
+accuracy 0.7600, macro precision 0.8201, macro recall 0.7600, macro F1
+0.7427, macro FPR 0.0600. The optional Isolation Forest is a binary
+benign/anomaly comparison, not a like-for-like five-class baseline.
 
-Measured Random Forest train/evaluation command wall time: 2.284 seconds,
-including cross-validation and different-seed evaluation. Prediction timing:
-0.926 ms per session on average over 13,000 single-session predictions on this
-machine. Timing is local, small-data evidence, not a production benchmark.
-The confusion matrix's test error was one port_scan predicted as brute_force.
-On the different-seed set, three sql_injection sessions were predicted benign.
-These are the observed error pairs. The small test supports and overlapping
-synthetic count/length features are plausible contributors; payload length had
-the largest importance (0.5033), but this is not a causal diagnosis.
+Measured Random Forest fit time was 0.263 seconds. Test prediction averaged
+0.03415 ms per session; the different-seed prediction averaged 0.01513 ms
+per session. These are local small-data timings, not production benchmarks.
 
 5. ADAPTIVE MECHANISM
 ---------------------
-Isolated SQLite scenarios, with records checked after the rule invocation:
+The integration runner loads the saved Random Forest, validates that its
+feature columns match the extractor, and uses its prediction/confidence for
+classification and adaptive decisions. The model-backed integration run
+added 10 sessions to the 1,500-session training database, classified all 10
+(benign 3, brute_force 2, directory_probe 2, port_scan 2, sql_injection 1),
+and recorded 12 adaptive actions and 6 alerts.
 
-Scenario                  Before                  Trigger/action                  Result
-10 failed logins          threshold 0.80,          3 consecutive high-confidence    rate limit enabled;
-from one source           not limited              brute_force results              threshold fell to 0.50;
-                                                                                   17 action rows,
-                                                                                   10 alerts
-10 rapid scan probes      banner unchanged         ten HTTP probe events followed    scan banner changed;
-from one source                                    by port_scan at confidence 0.95   classification and
-                                                                                   banner rows saved
-3 benign logins           threshold 0.80,          benign results                   not rate-limited;
-                          not limited                                              no false rate limit
+Predefined scenario checks:
+Scenario                 Before state              Trigger/action                 Result
+10 failed logins          threshold 0.80,            third consecutive high-        rate limit enabled;
+from one source           not limited                confidence brute_force          threshold 0.50;
+                                                     classification                 17 action rows,
+                                                                                    10 alerts
+10 rapid scan probes      banner unchanged           ten HTTP probes then            scan banner changed;
+                                                     port_scan at confidence 0.95   classification and
+                                                                                    banner actions stored
+3 benign logins           threshold 0.80,            benign classifications          no rate limit or
+                          not limited                                               banner change
 
-The rate limit first activated on the third malicious classification and
-remained active after the tenth; the recorded duration is 60 seconds. The
-benign scenario did not cause a rate limit or banner change. No false
-adaptation was observed in these three tested scenarios; this is not a
-population-wide false-adaptation estimate.
+The benign scenario caused no false adaptation. This is a result for the
+predefined scenarios only, not a population-wide false-adaptation estimate.
+Each action is stored in adaptive_actions. A first experiment-wrapper run
+stopped at an incorrect dashboard postcondition that conflated malicious
+labels with alertable classifications; the assertion was corrected, and the
+model-backed integration rerun completed successfully.
 
 6. TESTS
 --------
-Command:
-python -m coverage run --source=config,database,honeypot,simulator,features,ml,adaptive,dashboard,integration -m pytest -q
-Result: 77 passed in 81.52 seconds; 0 failed. Total statement coverage: 83%.
+Full local command:
+python -m coverage run --source=config,database,honeypot,simulator,features,ml,adaptive,dashboard,integration,scripts -m pytest -q
+python -m coverage report -m
+Observed result: 92 passed in 107.75 seconds; 0 failed; total statement
+coverage 80%.
 
 Module coverage:
-adaptive.rules 95%; config.loader 97%; dashboard.app 84%;
-dashboard.data 87%; database.db 96%; database.init_db 91%;
-features.extractor 91%; honeypot.tcp_service 59%;
-honeypot.web_service 85%; integration.run 71%; ml.train 77%;
-simulator.runner 82%. Package __init__.py files were 100% (no statements).
-The init_db CLI test covers its argument parsing, database creation, and
-confirmation output; its `if __name__ == "__main__"` guard is not covered.
+adaptive.rules 95%; config.environment 86%; config.loader 79%;
+dashboard.app 84%; dashboard.data 87%; database.db 97%;
+database.init_db 92%; features.extractor 94%; honeypot.tcp_service 76%;
+honeypot.web_service 86%; integration.run 71%; ml.train 81%;
+scripts.run_experiment 33%; simulator.runner 81%.
+Package __init__.py files have no executable statements.
+
+Fresh virtual-environment check:
+Command: powershell -ExecutionPolicy Bypass -File .\scripts\clean_install_check.ps1
+After pinning scikit-learn to 1.9.0 to match the saved joblib artifacts,
+the fresh environment installed requirements, initialized SQLite, and ran
+92 tests successfully in 95.05 seconds. The no-dashboard full pipeline
+generated and classified 10 sessions, 29 events, 12 adaptive actions, and
+6 alerts; its empty-database integration classifications were benign 4,
+brute_force 2, directory_probe 2, port_scan 2, sql_injection 0 (both
+SQL-injection-labeled sessions were predicted benign). Total clean-install
+time, including environment creation, installation, tests, pipeline, and
+cleanup: 231.75 seconds. No model-version warning appeared after the pin.
+The earlier range-based install selected scikit-learn 1.9.1 and emitted a
+joblib InconsistentVersionWarning for the 1.9.0 artifact; pinning and rerunning
+resolved that warning. The clean-install pytest run had no failures.
 
 7. ROBUSTNESS
 -------------
 Input                         Observed behavior
-Empty initialized database    Dashboard data query returned all zero totals
-                              and no event rows; UI displayed "No activity yet".
-Malformed stored event JSON   Feature extraction raised ValueError naming the
-                              session and invalid event-details JSON.
-Missing logging.level         Config loader raised ConfigError with the
-                              required logging-level message.
-TCP port 65536                Service startup raised ValueError before binding.
-TCP invalid UTF-8/600 bytes   "Invalid input"; protocol-error events recorded.
-Dropped TCP client            Logged tcp_disconnect; server remained available.
-Malformed web form            HTTP 200 fake failure page; request/attempt rows.
-17,000-byte web body          HTTP 413; request row logged.
+Empty initialized database    Dashboard returned zero counts and empty tables;
+                              Streamlit displayed "No activity yet".
+Malformed stored event JSON   Feature extraction raised ValueError identifying
+                              the session and invalid JSON.
+Missing logging.level         Config loader raised ConfigError; no silent default.
+Invalid TCP port 65536        Service startup rejected the port before binding.
+TCP invalid UTF-8 / 600 bytes "Invalid input"; protocol-error row recorded.
+Dropped TCP connection        tcp_disconnect logged; server stayed available.
+Malformed web form            Fake failure page; request and attempt logged.
+17,000-byte web body          HTTP 413; request logged.
+The TCP and web listeners are configured to bind only to 127.0.0.1.
 
 8. DASHBOARD ACCURACY
---------------------
-Date range selected in the populated dashboard: 2026-10-08 through 2026-11-06.
-Direct SQL and dashboard data-module results matched:
+---------------------
+Direct SQL and dashboard data-module queries were compared on
+results/experiment.db over the current experiment data:
 Measure                         Direct SQL          Dashboard
-Sessions                           112                  112
-Events                             186                  186
-Malicious classifications            9                    9
-Alerts                               9                    9
-Unique sources                       1                    1
-Classification counts: benign 3, brute_force 3, directory_probe 2,
-port_scan 2, sql_injection 2 (both data sources).
-Top five source IP query: 127.0.0.1, 112 sessions, 186 events. Only one
-distinct source exists in this localhost demo data.
+Sessions                           1510                 1510
+Events                             10837                10837
+Malicious classifications             6                    6
+Alerts                                6                    6
+Unique source IPs                     3                    3
+Classification rows matched exactly:
+benign 3, brute_force 2, directory_probe 2, port_scan 2, sql_injection 1.
+
+Top source IPs (direct query and dashboard):
+127.0.0.2: 525 sessions, 4049 events
+127.0.0.3: 501 sessions, 3523 events
+127.0.0.1: 484 sessions, 3265 events
+There are three sources, so no fourth or fifth source row exists. The
+dashboard count of six malicious classifications is the number of records
+that passed the adaptive alert threshold, not the number of non-benign class
+predictions.
 
 9. PERFORMANCE AND REPRODUCIBILITY
 -----------------------------------
-Twenty real test connections (10 TCP login, 10 web login) produced 20
-sessions and 40 expected database events in 3.108 seconds, or 12.87 events/s
-including the HTTP path. A separate bounded run of 100 sequential TCP login
-connections wrote 200 events in 16.288 seconds (12.28 events/s; 6.14
-connections/s). This did not test saturation or identify a maximum rate;
-no claim about the rate "before slowing" can be made from these bounded runs.
+The earlier 20-connection service check wrote 40 events in 3.108 seconds
+(12.87 events/second including HTTP). A separate bounded run of 100 sequential
+TCP login connections wrote 200 events in 16.288 seconds (12.28 events/second).
+These were sequential bounded observations, not a saturation test; no maximum
+rate or "before slowing" threshold was measured.
 
-The clean-install script creates a fresh virtual environment, installs
-requirements.txt, initializes a temporary SQLite database, runs all tests, and
-runs the integration pipeline with `--no-dashboard` (dashboard query checks
-still run; a second Streamlit process is not started).
-Command:
-powershell -ExecutionPolicy Bypass -File .\scripts\clean_install_check.ps1
-Result on Python 3.14.5: 77 passed in 98.42 seconds; then 12 sessions
-simulated and classified (benign 3, brute_force 3, directory_probe 2,
-port_scan 2, sql_injection 2), 21 events, 21 adaptive actions, and 9 alerts.
-The dashboard data query returned 12 sessions and 21 events. The complete
-fresh-venv install, tests, pipeline, and cleanup took 240.86 seconds
-(4 minutes 0.86 seconds).
+The model fit and per-session prediction timings are in Section 4. The
+fresh-venv install, tests and end-to-end pipeline completed in 231.75 seconds.
+The total wall time of the 1,500-per-class experiment wrapper was not recorded
+by its successful run; it should not be inferred from its generated timestamps.
+The experiment runner now records that elapsed time on the next full run.
 
 10. LIMITATIONS
 ---------------
-- All attack data is synthetic, bounded, and generated from a small set of
-  scenario templates; the credentials, SQL probes, and directory paths are
-  short fixed lists, and port probing checks only known service ports. This
-  does not capture the variety of real attackers.
-- Services intentionally bind only to 127.0.0.1 and the web endpoint uses the
-  Flask development server; this is not a remotely deployable service.
-- Both fake login services always reject credentials; password contents are
-  not stored, and successful authentication is not modeled.
-- The integration runner uses deterministic event heuristics and does not
-  load the saved Random Forest. Model evaluation is a separate command.
-- Model training uses only 50 synthetic sessions; the additional 50-session
-  seed check does not establish real-world generalization.
-- SQLite stores timestamps with one-second resolution; short durations can
-  appear as zero seconds.
-- `.env` files are not loaded by the application, and the standalone
-  `config/settings.yaml` validator is not wired into service launch commands.
-- The reported run used Python 3.14.5; other interpreter versions were not
-  tested in this environment.
-- The observed test set is small: only 13 sessions. Error-rate estimates and
-  feature importances are consequently unstable.
-- The measured throughput tests were sequential and bounded. No saturation
-  limit was measured.
+- All training and evaluation data is synthetic, generated from bounded
+  templates and short vocabularies; it does not represent real attacker
+  diversity or behavior.
+- Low-and-slow pacing and benign typos/long inputs are configured synthetic
+  patterns, not observed human or attacker behavior.
+- All three source addresses are loopback aliases on one computer, not
+  independent hosts or network paths.
+- Services intentionally bind to 127.0.0.1, always reject credentials, and
+  the web service uses Flask's development server.
+- Source-window features depend on the synthetic source assignment and event
+  order. The random session-level train/test split does not group sessions by
+  source or time, so related source-window values can occur across splits and
+  the reported scores may overstate performance on independent sources.
+- Test-split mistakes were limited to benign versus SQL injection; on the
+  different-seed set, the same pair accounted for all errors. The experiment
+  does not establish real-world generalization.
+- The clean empty-database pipeline had one SQL-injection-labeled session
+  predicted benign. In a populated experiment database, source-window history
+  differs; the two runs are not directly interchangeable.
+- Database timestamps have millisecond resolution, not packet-level timing.
+- Throughput tests were sequential; saturation behavior was not measured.
+- The current verified interpreter was Python 3.14.5; other Python versions
+  were not tested.
 
-SCREENSHOT NOTES
-----------------
-screenshots/dashboard_overview.png, dashboard_filtered_events.png,
-dashboard_events_table.png, dashboard_empty.png, and fake_web_login.png are
-captures from the actual local web apps. `clean_install_check.png` is rendered
-from the successful fresh-install command output. Other PNGs are report
-graphics rendered from actual database rows, model output, test output, or
-source code.
-The project tree and schema graphics are generated views, not screenshots of
-VS Code Explorer or DB Browser for SQLite. No DB Browser or VS Code window
-capture was available in this environment.
+RESULTS AND SCREENSHOTS
+-----------------------
+The results/ directory contains 21 regenerated experiment artifacts,
+including the two SQLite databases, separate labels, model, metrics,
+feature CSVs, cross-validation scores, confusion matrix and plots.
+The screenshots/ directory contains 29 PNGs plus its evidence index.
+The existing screenshot README identifies which are actual local-app captures
+and which are generated representations. Its dashboard/database captures
+reflect a prior demo-database state and may not show the current 1,510-session
+experiment counts; the direct SQL/dashboard comparison above was rerun on
+the current database. The project-tree and schema images are representations,
+not captures of VS Code Explorer or DB Browser for SQLite.

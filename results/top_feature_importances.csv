@@ -1,0 +1,11 @@
+feature,importance
+payload_length_chars,0.3783035961612768
+event_count,0.0881224796644145
+login_attempt_count,0.0833956446144666
+unique_usernames,0.0828495150494769
+attempts_per_minute,0.0695655891058005
+session_duration_seconds,0.0640013774221568
+tcp_connection_count,0.0492786245419719
+http_request_count,0.0374666850353464
+unique_event_types,0.0373842367158256
+unique_paths,0.0352109685352176

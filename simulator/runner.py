@@ -1,8 +1,9 @@
-"""Generate small, labelled traffic samples against this project's local services."""
+"""Generate labelled traffic against this project's loopback-only local services."""
 
 import argparse
 import csv
 import http.client
+import ipaddress
 import logging
 import random
 import socket
@@ -23,11 +24,10 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "simul
 DEFAULT_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "ground_truth.csv"
 NETWORK_TIMEOUT_SECONDS = 3
 MAX_DELAY_SECONDS = 2.0
-MAX_BRUTE_FORCE_ATTEMPTS = 10
-MAX_PORT_SCAN_PROBES = 10
-MAX_SQL_PROBES = 10
-MAX_DIRECTORY_PROBES = 10
-MAX_BENIGN_SESSIONS = 10
+MAX_SESSIONS_PER_CLASS = 1000
+MIN_BRUTE_FORCE_ATTEMPTS = 5
+MAX_BRUTE_FORCE_ATTEMPTS = 50
+DEFAULT_SOURCE_IPS = ("127.0.0.1", "127.0.0.2", "127.0.0.3")
 BRUTE_FORCE_CREDENTIALS = (
     ("guest", "not-a-real-password"),
     ("admin", "incorrect-example"),
@@ -49,8 +49,15 @@ DIRECTORY_PATHS = (
     "/static/",
     "/backup",
 )
-BENIGN_USERS = ("alice", "bob", "charlie", "dana", "erin")
-BENIGN_PASSWORDS = ("sample-password", "not-a-secret", "example-value")
+BENIGN_USERS = ("alice", "bob", "charlie", "dana", "erin", "alcie", "studnet")
+BENIGN_PASSWORDS = (
+    "sample-password",
+    "not-a-secret",
+    "example-value",
+    "sample-" + "x" * 128,
+    "sample-" + "y" * 1024,
+    "sample-" + "z" * 4096,
+)
 
 
 class SimulationConfigError(ValueError):
@@ -62,11 +69,17 @@ class SimulationConfig:
     seed: int
     min_delay_seconds: float
     max_delay_seconds: float
-    brute_force_attempts: int
-    port_scan_probes: int
-    sql_injection_probes: int
-    directory_probes: int
+    brute_force_sessions: int
+    port_scan_sessions: int
+    sql_injection_sessions: int
+    directory_probe_sessions: int
     benign_sessions: int
+    brute_force_attempt_min: int = MIN_BRUTE_FORCE_ATTEMPTS
+    brute_force_attempt_max: int = MAX_BRUTE_FORCE_ATTEMPTS
+    low_and_slow_min_delay_seconds: float = 0.01
+    low_and_slow_max_delay_seconds: float = 0.03
+    low_and_slow_probability: float = 0.2
+    source_ips: tuple[str, ...] = DEFAULT_SOURCE_IPS
 
 
 def _validate_mapping(value: object, name: str, expected_keys: set[str]) -> dict:
@@ -93,6 +106,26 @@ def _validate_delay(value: object, name: str) -> float:
     return float(value)
 
 
+def _validate_source_ip(source_ip: str) -> str:
+    if not isinstance(source_ip, str):
+        raise ValueError("source_ip must be a loopback IPv4 address.")
+    try:
+        address = ipaddress.ip_address(source_ip)
+    except ValueError as exc:
+        raise ValueError("source_ip must be a loopback IPv4 address.") from exc
+    if not isinstance(address, ipaddress.IPv4Address) or not address.is_loopback:
+        raise ValueError("source_ip must be a loopback IPv4 address.")
+    return str(address)
+
+
+def _validate_probability(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SimulationConfigError(f"{name} must be a number from 0 through 1.")
+    if not 0 <= value <= 1:
+        raise SimulationConfigError(f"{name} must be a number from 0 through 1.")
+    return float(value)
+
+
 def load_simulation_config(path: str | Path = DEFAULT_CONFIG_PATH) -> SimulationConfig:
     """Read and validate the simulator's YAML settings."""
     config_path = Path(path)
@@ -105,7 +138,11 @@ def load_simulation_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Simulation
     except yaml.YAMLError as exc:
         raise SimulationConfigError(f"Invalid simulator YAML: {exc}") from exc
 
-    top = _validate_mapping(data, "simulator config", {"seed", "timing", "volumes"})
+    top = _validate_mapping(
+        data,
+        "simulator config",
+        {"seed", "timing", "volumes", "source_ips"},
+    )
     seed = top["seed"]
     if type(seed) is not int or not 0 <= seed <= 4_294_967_295:
         raise SimulationConfigError("seed must be an integer from 0 through 4294967295.")
@@ -113,51 +150,119 @@ def load_simulation_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Simulation
     timing = _validate_mapping(
         top["timing"],
         "timing",
-        {"min_delay_seconds", "max_delay_seconds"},
+        {
+            "min_delay_seconds",
+            "max_delay_seconds",
+            "low_and_slow_min_delay_seconds",
+            "low_and_slow_max_delay_seconds",
+            "low_and_slow_probability",
+        },
     )
     min_delay = _validate_delay(timing["min_delay_seconds"], "min_delay_seconds")
     max_delay = _validate_delay(timing["max_delay_seconds"], "max_delay_seconds")
     if min_delay > max_delay:
         raise SimulationConfigError("min_delay_seconds cannot exceed max_delay_seconds.")
+    slow_min_delay = _validate_delay(
+        timing["low_and_slow_min_delay_seconds"],
+        "low_and_slow_min_delay_seconds",
+    )
+    slow_max_delay = _validate_delay(
+        timing["low_and_slow_max_delay_seconds"],
+        "low_and_slow_max_delay_seconds",
+    )
+    if slow_min_delay > slow_max_delay:
+        raise SimulationConfigError(
+            "low_and_slow_min_delay_seconds cannot exceed "
+            "low_and_slow_max_delay_seconds."
+        )
+    slow_probability = _validate_probability(
+        timing["low_and_slow_probability"],
+        "low_and_slow_probability",
+    )
 
     volume_keys = {
-        "brute_force_attempts",
-        "port_scan_probes",
-        "sql_injection_probes",
-        "directory_probes",
+        "brute_force_sessions",
+        "port_scan_sessions",
+        "sql_injection_sessions",
+        "directory_probe_sessions",
         "benign_sessions",
+        "brute_force_attempt_min",
+        "brute_force_attempt_max",
     }
     volumes = _validate_mapping(top["volumes"], "volumes", volume_keys)
+    attempt_min = volumes["brute_force_attempt_min"]
+    attempt_max = volumes["brute_force_attempt_max"]
+    if type(attempt_min) is not int or not MIN_BRUTE_FORCE_ATTEMPTS <= attempt_min <= MAX_BRUTE_FORCE_ATTEMPTS:
+        raise SimulationConfigError("brute_force_attempt_min must be from 5 through 50.")
+    if type(attempt_max) is not int or not MIN_BRUTE_FORCE_ATTEMPTS <= attempt_max <= MAX_BRUTE_FORCE_ATTEMPTS:
+        raise SimulationConfigError("brute_force_attempt_max must be from 5 through 50.")
+    if attempt_min > attempt_max:
+        raise SimulationConfigError("brute_force_attempt_min cannot exceed brute_force_attempt_max.")
+
+    source_ips_value = top["source_ips"]
+    if (
+        not isinstance(source_ips_value, list)
+        or len(source_ips_value) < 3
+        or any(not isinstance(value, str) for value in source_ips_value)
+        or len(set(source_ips_value)) != len(source_ips_value)
+    ):
+        raise SimulationConfigError("source_ips must contain at least three unique loopback IPv4 addresses.")
+    source_ips: list[str] = []
+    for value in source_ips_value:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise SimulationConfigError("source_ips must contain loopback IPv4 addresses.") from exc
+        if not isinstance(address, ipaddress.IPv4Address) or not address.is_loopback:
+            raise SimulationConfigError("source_ips must contain loopback IPv4 addresses.")
+        source_ips.append(str(address))
+
     return SimulationConfig(
         seed=seed,
         min_delay_seconds=min_delay,
         max_delay_seconds=max_delay,
-        brute_force_attempts=_validate_count(
-            volumes["brute_force_attempts"], "brute_force_attempts", MAX_BRUTE_FORCE_ATTEMPTS
+        brute_force_sessions=_validate_count(
+            volumes["brute_force_sessions"], "brute_force_sessions", MAX_SESSIONS_PER_CLASS
         ),
-        port_scan_probes=_validate_count(
-            volumes["port_scan_probes"], "port_scan_probes", MAX_PORT_SCAN_PROBES
+        port_scan_sessions=_validate_count(
+            volumes["port_scan_sessions"], "port_scan_sessions", MAX_SESSIONS_PER_CLASS
         ),
-        sql_injection_probes=_validate_count(
-            volumes["sql_injection_probes"], "sql_injection_probes", MAX_SQL_PROBES
+        sql_injection_sessions=_validate_count(
+            volumes["sql_injection_sessions"], "sql_injection_sessions", MAX_SESSIONS_PER_CLASS
         ),
-        directory_probes=_validate_count(
-            volumes["directory_probes"], "directory_probes", MAX_DIRECTORY_PROBES
+        directory_probe_sessions=_validate_count(
+            volumes["directory_probe_sessions"], "directory_probe_sessions", MAX_SESSIONS_PER_CLASS
         ),
         benign_sessions=_validate_count(
-            volumes["benign_sessions"], "benign_sessions", MAX_BENIGN_SESSIONS
+            volumes["benign_sessions"], "benign_sessions", MAX_SESSIONS_PER_CLASS
         ),
+        brute_force_attempt_min=attempt_min,
+        brute_force_attempt_max=attempt_max,
+        low_and_slow_min_delay_seconds=slow_min_delay,
+        low_and_slow_max_delay_seconds=slow_max_delay,
+        low_and_slow_probability=slow_probability,
+        source_ips=tuple(source_ips),
     )
 
 
-def _receive_until(connection: socket.socket, marker: bytes) -> bytes:
-    received = bytearray()
-    while marker not in received:
+def _receive_until(
+    connection: socket.socket,
+    marker: bytes,
+    *,
+    buffer: bytearray | None = None,
+) -> bytes:
+    received = buffer if buffer is not None else bytearray()
+    while True:
+        marker_index = received.find(marker)
+        if marker_index >= 0:
+            marker_end = marker_index + len(marker)
+            result = bytes(received[:marker_end])
+            del received[:marker_end]
+            return result
         chunk = connection.recv(256)
         if not chunk:
             raise ConnectionError("TCP service closed before sending its prompt.")
         received.extend(chunk)
-    return bytes(received)
 
 
 def _tcp_login(
@@ -179,11 +284,46 @@ def _tcp_login(
         _receive_until(connection, b"Login failed.")
 
 
-def _probe_tcp_port(*, port: int = DEFAULT_TCP_PORT) -> None:
+def _tcp_login_attempts(
+        credentials: list[tuple[str, str]],
+        *,
+        port: int = DEFAULT_TCP_PORT,
+        source_ip: str = "127.0.0.1",
+        delay_between_attempts: Callable[[], float] | None = None,
+) -> None:
+        """Submit multiple dummy attempts over one local TCP session."""
+        if not credentials or len(credentials) > MAX_BRUTE_FORCE_ATTEMPTS:
+            raise ValueError("credentials must contain from 1 through 50 attempts.")
+        source_ip = _validate_source_ip(source_ip)
+        connection = socket.create_connection(
+            (LOCALHOST, port),
+            timeout=NETWORK_TIMEOUT_SECONDS,
+            source_address=(source_ip, 0),
+        )
+        with connection:
+            connection.settimeout(NETWORK_TIMEOUT_SECONDS)
+            response_buffer = bytearray()
+            for index, (username, password) in enumerate(credentials):
+                _receive_until(connection, b"Username: ", buffer=response_buffer)
+                connection.sendall(username.encode("utf-8") + b"\n")
+                _receive_until(connection, b"Password: ", buffer=response_buffer)
+                connection.sendall(password.encode("utf-8") + b"\n")
+                _receive_until(connection, b"Login failed.", buffer=response_buffer)
+                if index + 1 < len(credentials) and delay_between_attempts is not None:
+                    time.sleep(delay_between_attempts())
+
+
+def _probe_tcp_port(
+    *,
+    port: int = DEFAULT_TCP_PORT,
+    source_ip: str = "127.0.0.1",
+) -> None:
     """Check only the project's known fake TCP service, then disconnect."""
+    source_ip = _validate_source_ip(source_ip)
     with socket.create_connection(
         (LOCALHOST, port),
         timeout=NETWORK_TIMEOUT_SECONDS,
+        source_address=(source_ip, 0),
     ) as connection:
         connection.settimeout(NETWORK_TIMEOUT_SECONDS)
         _receive_until(connection, b"Username: ")
@@ -195,6 +335,7 @@ def _http_request(
     method: str = "GET",
     form: dict[str, str] | None = None,
     port: int = DEFAULT_WEB_PORT,
+    source_ip: str = "127.0.0.1",
 ) -> int:
     """Send a single request to this project's fixed local fake web service."""
     if not path.startswith("/") or path.startswith("//"):
@@ -204,11 +345,17 @@ def _http_request(
     if form is not None:
         body = urllib.parse.urlencode(form)
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-    connection = http.client.HTTPConnection(
-        LOCALHOST,
-        port,
-        timeout=NETWORK_TIMEOUT_SECONDS,
-    )
+    source_ip = _validate_source_ip(source_ip)
+
+    class LocalHTTPConnection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            self.sock = socket.create_connection(
+                (self.host, self.port),
+                timeout=self.timeout,
+                source_address=(source_ip, 0),
+            )
+
+    connection = LocalHTTPConnection(LOCALHOST, port, timeout=NETWORK_TIMEOUT_SECONDS)
     try:
         connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
@@ -270,55 +417,128 @@ def run_simulation(
         if delay:
             time.sleep(delay)
 
-    credentials = rng.choices(
-        BRUTE_FORCE_CREDENTIALS,
-        k=config.brute_force_attempts,
-    )
-    for username, password in credentials:
-        run_labeled(
-            "brute_force",
-            lambda u=username, p=password: _tcp_login(u, p, port=tcp_port),
+    if len(config.source_ips) < 3 or any(
+        not ipaddress.ip_address(address).is_loopback for address in config.source_ips
+    ):
+        raise ValueError("source_ips must contain at least three loopback addresses.")
+
+    operations: list[tuple[str, Callable[[str], object], bool]] = []
+    for _ in range(config.brute_force_sessions):
+        attempt_count = rng.randint(
+            config.brute_force_attempt_min,
+            config.brute_force_attempt_max,
+        )
+        credentials = [
+            rng.choice(BRUTE_FORCE_CREDENTIALS)
+            for _ in range(attempt_count)
+        ]
+        is_slow = rng.random() < config.low_and_slow_probability
+        operations.append(
+            (
+                "brute_force",
+                lambda source, values=credentials, slow=is_slow: _tcp_login_attempts(
+                    values,
+                    port=tcp_port,
+                    source_ip=source,
+                    delay_between_attempts=(
+                        (lambda: rng.uniform(
+                            config.low_and_slow_min_delay_seconds,
+                            config.low_and_slow_max_delay_seconds,
+                        ))
+                        if slow
+                        else None
+                    ),
+                ),
+                is_slow,
+            )
         )
 
-    port_probes: tuple[Callable[[], object], ...] = (
-        lambda: _probe_tcp_port(port=tcp_port),
-        lambda: _http_request("/", port=web_port),
-    )
-    selected_ports = rng.choices(port_probes, k=config.port_scan_probes)
-    for probe in selected_ports:
-        run_labeled("port_scan", probe)
+    for _ in range(config.port_scan_sessions):
+        if rng.choice((True, False)):
+            operations.append(
+                (
+                    "port_scan",
+                    lambda source: _probe_tcp_port(
+                        port=tcp_port,
+                        source_ip=source,
+                    ),
+                    rng.random() < config.low_and_slow_probability,
+                )
+            )
+        else:
+            operations.append(
+                (
+                    "port_scan",
+                    lambda source: _http_request(
+                        "/",
+                        port=web_port,
+                        source_ip=source,
+                    ),
+                    rng.random() < config.low_and_slow_probability,
+                )
+            )
 
-    sql_probes = rng.choices(SQL_PROBES, k=config.sql_injection_probes)
-    for probe in sql_probes:
-        run_labeled(
-            "sql_injection",
-            lambda value=probe: _http_request(
-                "/login",
-                method="POST",
-                form={"username": value, "password": "example-only"},
-                port=web_port,
-            ),
+    for _ in range(config.sql_injection_sessions):
+        probe = rng.choice(SQL_PROBES)
+        operations.append(
+            (
+                "sql_injection",
+                lambda source, value=probe: _http_request(
+                    "/login",
+                    method="POST",
+                    form={"username": value, "password": "example-only"},
+                    port=web_port,
+                    source_ip=source,
+                ),
+                rng.random() < config.low_and_slow_probability,
+            )
         )
 
-    directory_paths = rng.choices(DIRECTORY_PATHS, k=config.directory_probes)
-    for path in directory_paths:
-        run_labeled(
-            "directory_probe",
-            lambda value=path: _http_request(value, port=web_port),
+    for _ in range(config.directory_probe_sessions):
+        path_value = rng.choice(DIRECTORY_PATHS)
+        operations.append(
+            (
+                "directory_probe",
+                lambda source, value=path_value: _http_request(
+                    value,
+                    port=web_port,
+                    source_ip=source,
+                ),
+                rng.random() < config.low_and_slow_probability,
+            )
         )
 
     for _ in range(config.benign_sessions):
         username = rng.choice(BENIGN_USERS)
         password = rng.choice(BENIGN_PASSWORDS)
-        run_labeled(
-            "benign",
-            lambda u=username, p=password: _http_request(
-                "/login",
-                method="POST",
-                form={"username": u, "password": p},
-                port=web_port,
-            ),
+        operations.append(
+            (
+                "benign",
+                lambda source, u=username, p=password: _http_request(
+                    "/login",
+                    method="POST",
+                    form={"username": u, "password": p},
+                    port=web_port,
+                    source_ip=source,
+                ),
+                False,
+            )
         )
+
+    rng.shuffle(operations)
+    for label, operation, is_slow in operations:
+        source_ip = rng.choice(config.source_ips)
+        run_labeled(
+            label,
+            lambda op=operation, source=source_ip: op(source),
+        )
+        if is_slow and config.low_and_slow_max_delay_seconds:
+            time.sleep(
+                rng.uniform(
+                    config.low_and_slow_min_delay_seconds,
+                    config.low_and_slow_max_delay_seconds,
+                )
+            )
 
     output_path = Path(labels_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -335,6 +555,8 @@ def run_simulation(
 
 
 def main() -> None:
+    from config.environment import database_path
+
     parser = argparse.ArgumentParser(
         description="Generate bounded, labelled traffic against the local honeypot."
     )
@@ -350,9 +572,18 @@ def main() -> None:
         default=DEFAULT_LABELS_PATH,
         help=f"separate CSV ground-truth output (default: {DEFAULT_LABELS_PATH})",
     )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=database_path() or DEFAULT_DB_PATH,
+    )
     args = parser.parse_args()
     config = load_simulation_config(args.config)
-    count = run_simulation(config, labels_path=args.labels)
+    count = run_simulation(
+        config,
+        labels_path=args.labels,
+        db_path=args.database,
+    )
     print(f"Recorded {count} labelled sessions in {args.labels}")
 
 

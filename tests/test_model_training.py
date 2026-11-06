@@ -2,9 +2,11 @@ import csv
 import json
 
 import joblib
+import pandas as pd
 import pytest
 
 from database.db import create_event, create_session, initialize_database
+from features.extractor import FEATURE_COLUMNS
 from ml.train import train_and_evaluate
 
 
@@ -65,6 +67,15 @@ def test_training_saves_model_metrics_and_separate_seed_evaluation(tmp_path):
     }
     saved_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     assert saved_metrics == metrics
+    exported_features = pd.read_csv(tmp_path / "session_features.csv")
+    assert list(exported_features.columns) == ["session_id", *FEATURE_COLUMNS]
+    assert "label" not in exported_features.columns
+    assert (tmp_path / "feature_means_by_class.csv").exists()
+    assert (tmp_path / "feature_missing_zero_summary.csv").exists()
+    assert (tmp_path / "feature_importances.csv").exists()
+    assert (tmp_path / "confusion_matrix.csv").exists()
+    assert (tmp_path / "cross_validation_scores.csv").exists()
+    assert "logistic_regression_baseline" in metrics
 
 
 def test_training_rejects_duplicate_session_labels(tmp_path):

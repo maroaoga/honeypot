@@ -1,0 +1,6 @@
+actual,benign,brute_force,directory_probe,port_scan,sql_injection
+benign,73,0,0,0,2
+brute_force,0,75,0,0,0
+directory_probe,0,0,75,0,0
+port_scan,0,0,0,75,0
+sql_injection,1,0,0,0,74

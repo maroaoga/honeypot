@@ -62,6 +62,12 @@ def _validate_limit(limit: int) -> int:
     return limit
 
 
+def _validate_offset(offset: int) -> int:
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a non-negative integer.")
+    return offset
+
+
 def _serialize_details(details: dict[str, object] | None) -> str:
     if details is None:
         details = {}
@@ -142,13 +148,16 @@ def get_session(
 def list_sessions(
     *,
     limit: int = 100,
+    offset: int = 0,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, object]]:
     limit = _validate_limit(limit)
+    offset = _validate_offset(offset)
     with _connection(db_path) as connection:
         rows = connection.execute(
-            "SELECT id, source_ip, started_at FROM sessions ORDER BY id DESC LIMIT ?",
-            (limit,),
+            "SELECT id, source_ip, started_at FROM sessions "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
         return _records(rows)
 
@@ -317,21 +326,24 @@ def list_adaptive_actions(
     *,
     session_id: int | None = None,
     limit: int = 100,
+    offset: int = 0,
     db_path: str | Path = DEFAULT_DB_PATH,
 ) -> list[dict[str, object]]:
     limit = _validate_limit(limit)
+    offset = _validate_offset(offset)
     if session_id is not None:
         session_id = _validate_id(session_id, "session_id")
         query = (
             "SELECT id, session_id, alert_id, created_at, action_type, details, outcome "
-            "FROM adaptive_actions WHERE session_id = ? ORDER BY id DESC LIMIT ?"
+            "FROM adaptive_actions WHERE session_id = ? "
+            "ORDER BY id DESC LIMIT ? OFFSET ?"
         )
-        parameters = (session_id, limit)
+        parameters = (session_id, limit, offset)
     else:
         query = (
             "SELECT id, session_id, alert_id, created_at, action_type, details, outcome "
-            "FROM adaptive_actions ORDER BY id DESC LIMIT ?"
+            "FROM adaptive_actions ORDER BY id DESC LIMIT ? OFFSET ?"
         )
-        parameters = (limit,)
+        parameters = (limit, offset)
     with _connection(db_path) as connection:
         return _records(connection.execute(query, parameters).fetchall())

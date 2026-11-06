@@ -5,6 +5,7 @@ $CheckRoot = Join-Path $env:TEMP ("honeypot-clean-install-" + [guid]::NewGuid().
 $VenvPath = Join-Path $CheckRoot "venv"
 $CleanPython = Join-Path $VenvPath "Scripts\python.exe"
 $CheckDatabase = Join-Path $CheckRoot "clean-install.db"
+$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
 try {
     New-Item -ItemType Directory -Path $CheckRoot | Out-Null
@@ -38,6 +39,8 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "The end-to-end pipeline failed in the clean environment."
         }
+        $Stopwatch.Stop()
+        Write-Output ("Clean-install check passed in {0:N2} seconds." -f $Stopwatch.Elapsed.TotalSeconds)
     }
     finally {
         Pop-Location
